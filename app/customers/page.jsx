@@ -124,7 +124,34 @@ export default function CustomersPage() {
       );
       if (!response.ok) throw new Error("Failed to fetch customers");
       const data = await response.json();
-      setCustomers(data); // backend returns filtered data
+      // Decorate with persisted "new member" flags from localStorage
+      const decorated = Array.isArray(data)
+        ? data.map((c) => {
+            try {
+              const stored = localStorage.getItem(`newMember:${c.id}`);
+              if (!stored) return c;
+              const parsed = JSON.parse(stored);
+              const createdAt = parsed?.createdAt ? new Date(parsed.createdAt) : null;
+              const now = new Date();
+              // Consider "new" within 24 hours of creation
+              const isFresh = createdAt && now.getTime() - createdAt.getTime() < 24 * 60 * 60 * 1000;
+              if (isFresh) {
+                return {
+                  ...c,
+                  isNewMember: true,
+                  newMemberType: parsed?.type || (c.membership_status ? String(c.membership_status).toLowerCase() : undefined),
+                };
+              } else {
+                // Expired flag, clean up
+                localStorage.removeItem(`newMember:${c.id}`);
+              }
+            } catch (_) {
+              // ignore parsing errors
+            }
+            return c;
+          })
+        : data;
+      setCustomers(decorated); // backend returns filtered data
     } catch (error) {
       console.error(error);
     } finally {
@@ -356,9 +383,18 @@ export default function CustomersPage() {
       setCustomerMemberships((prev) => [...prev, newMembership]);
       setCustomers((prev) =>
         prev.map((c) =>
-          c.id === customerId ? { ...c, membershipUpdatedAt: Date.now() } : c
+          c.id === customerId
+            ? { ...c, membershipUpdatedAt: Date.now(), isNewMember: false, newMemberType: undefined }
+            : c
         )
       );
+
+      // Clear persisted "new member" flag on renewal
+      try {
+        localStorage.removeItem(`newMember:${customerId}`);
+      } catch (_) {
+        // ignore storage errors
+      }
 
       fetchMembershipLogs(customerId);
       toast.success("✅ Membership renewed successfully!");
@@ -423,6 +459,8 @@ export default function CustomersPage() {
                 dateRegistered: data.date_registered,
                 expireDate: data.expire_date,
               },
+              isNewMember: true,
+              newMemberType: data.type,
             }
             : c
         );
@@ -430,6 +468,16 @@ export default function CustomersPage() {
         setCustomers(updatedCustomers);
         setIsMembershipModalOpen(false);
         setSelectedCustomer(updatedCustomers.find((c) => c.id === customer.id));
+
+        // Persist the "new member" flag so it survives reloads (expires in 24h)
+        try {
+          localStorage.setItem(
+            `newMember:${customer.id}`,
+            JSON.stringify({ type: data.type, createdAt: new Date().toISOString() })
+          );
+        } catch (_) {
+          // storage may be unavailable; ignore
+        }
 
         toast.success("Membership added successfully");
       } else {
@@ -574,64 +622,74 @@ export default function CustomersPage() {
     toast.success("Changes saved successfully");
   };
 
-  const handleAddCustomer = async () => {
-    try {
-      // Validate required fields
-      if (!newCustomer.name || !newCustomer.contact) {
-        toast.error("Name and contact information are required");
-        return;
-      }
+  const handleAddCustomer = async (e) => {
+  e.preventDefault(); // Prevent reload
 
-      // Prepare the data to send
-      const customerData = {
-        action: "add",
-        name: newCustomer.name,
-        phone: newCustomer.contact, // Changed from contact to phone
-        email: newCustomer.email || "",
-        address: newCustomer.address || "",
-        birthday: newCustomer.birthday || null,
-        isMember: newCustomer.membership !== "None", // Convert to boolean
-        membershipType:
-          newCustomer.membership !== "None" ? newCustomer.membership : null,
-      };
-
-      // Send request to PHP backend
-      const response = await fetch("customers.php", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(customerData),
-      });
-
-      const result = await response.json();
-
-      if (!response.ok) {
-        throw new Error(result.message || "Failed to add customer");
-      }
-
-      // Refetch customers instead of updating locally to ensure consistency
-      const fetchResponse = await fetch("customers.php");
-      const updatedCustomers = await fetchResponse.json();
-      setCustomers(updatedCustomers);
-
-      // Reset form
-      setNewCustomer({
-        name: "",
-        contact: "",
-        email: "",
-        address: "",
-        membership: "None",
-        birthday: "",
-      });
-
-      setIsModalOpen(false);
-      toast.success("Customer added successfully");
-    } catch (error) {
-      console.error("Error adding customer:", error);
-      toast.error(error.message || "Failed to add customer");
+  try {
+    // ✅ Validate required fields
+    if (!newCustomer.name || !newCustomer.contact) {
+      toast.error("Name and contact number are required.");
+      return;
     }
-  };
+
+    // ✅ Step 1: Check for duplicates in the existing customer list
+    const duplicate = customers.find(
+      (cust) =>
+        cust.name.trim().toLowerCase() === newCustomer.name.trim().toLowerCase() ||
+        cust.phone === newCustomer.contact
+    );
+
+    if (duplicate) {
+      toast.error("Customer with this name or contact number already exists.");
+      return;
+    }
+
+    // ✅ Step 2: Prepare payload
+    const payload = {
+      name: newCustomer.name.trim(),
+      phone: newCustomer.contact.trim(),
+      email: newCustomer.email || null,
+      address: newCustomer.address || null,
+      birthday: newCustomer.birthday || null,
+    };
+
+    // ✅ Step 3: Send POST request to backend
+    const response = await fetch("http://localhost/API/customers.php?action=add", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+
+    const result = await response.json();
+
+    if (!result.success || !result.customer_id) {
+      toast.error(result.message || "Failed to add customer.");
+      return;
+    }
+
+    toast.success("Customer added successfully!");
+
+    // ✅ Step 4: Refresh customers list (so it appears immediately)
+    const fetchResponse = await fetch("http://localhost/API/customers.php?action=get_all");
+    const updatedCustomers = await fetchResponse.json();
+    setCustomers(updatedCustomers);
+
+    // ✅ Step 5: Reset form and close modal
+    setNewCustomer({
+      name: "",
+      contact: "",
+      email: "",
+      address: "",
+      birthday: "",
+    });
+
+    setIsModalOpen(false);
+  } catch (error) {
+    console.error("Error adding customer:", error);
+    toast.error("An error occurred while adding customer.");
+  }
+};
+
 
   const handleLogout = () => {
     localStorage.removeItem("authToken");
@@ -1155,14 +1213,18 @@ export default function CustomersPage() {
                                 <div className="ml-3 md:ml-4">
                                   <div className="text-sm font-medium text-gray-900 flex items-center">
                                     {customer.name}
-                                    {customer.membership_status && customer.membership_status.toLowerCase() !== "none" && (
-                                      <span className="ml-2 bg-blue-100 text-blue-800 text-xs px-1.5 py-0.5 rounded-full">
-                                        Member
+                                    {customer.isNewMember ? (
+                                      <span className="ml-2 bg-amber-100 text-amber-800 text-xs px-1.5 py-0.5 rounded-full border border-amber-200">
+                                        New {customer.newMemberType ? customer.newMemberType.charAt(0).toUpperCase() + customer.newMemberType.slice(1) : ""} Member
                                       </span>
+                                    ) : (
+                                      customer.membership_status &&
+                                      customer.membership_status.toLowerCase() !== "none" && (
+                                        <span className="ml-2 bg-blue-100 text-blue-800 text-xs px-1.5 py-0.5 rounded-full">
+                                          Member
+                                        </span>
+                                      )
                                     )}
-                                  </div>
-                                  <div className="text-xs text-gray-500">
-                                    ID: {customer.customerId}
                                   </div>
                                 </div>
                               </div>
@@ -1552,7 +1614,7 @@ export default function CustomersPage() {
                       </div>
                     </div>
 
-                    {/* Recent Activity */}
+                    {/* Recent Activity
                     <div>
                       <h3 className="text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2 flex items-center">
                         <Activity className="mr-2" size={14} />
@@ -1585,7 +1647,7 @@ export default function CustomersPage() {
                           </div>
                         )}
                       </div>
-                    </div>
+                    </div> */}
                   </div>
                 </div>
               </motion.div>
@@ -1958,132 +2020,127 @@ export default function CustomersPage() {
       {/* Add Customer Modal */}
       <AnimatePresence>
         {isModalOpen && (
-          <motion.div
-            className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+  <motion.div
+    className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+    initial={{ opacity: 0 }}
+    animate={{ opacity: 1 }}
+    exit={{ opacity: 0 }}
+  >
+    <motion.div
+      className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-8"
+      initial={{ scale: 0.95, y: 20, opacity: 0 }}
+      animate={{ scale: 1, y: 0, opacity: 1 }}
+      exit={{ scale: 0.95, y: 20, opacity: 0 }}
+      transition={{ duration: 0.3 }}
+    >
+      <h2 className="text-2xl font-semibold text-gray-800 mb-6">
+        Add New Customer
+      </h2>
+
+      {/* ✅ Wrap everything inside a form */}
+      <form onSubmit={handleAddCustomer}>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Name */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Full Name <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={newCustomer.name}
+              onChange={(e) =>
+                setNewCustomer({ ...newCustomer, name: e.target.value })
+              }
+              className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              placeholder="Enter full name"
+              required
+            />
+          </div>
+
+          {/* Contact */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Contact Number <span className="text-red-500">*</span>
+            </label>
+            <input
+              type="text"
+              value={newCustomer.contact}
+              onChange={(e) =>
+                setNewCustomer({ ...newCustomer, contact: e.target.value })
+              }
+              className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              placeholder="e.g. 09XXXXXXXXX"
+              required
+            />
+          </div>
+
+          {/* Email */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Email Address
+            </label>
+            <input
+              type="email"
+              value={newCustomer.email}
+              onChange={(e) =>
+                setNewCustomer({ ...newCustomer, email: e.target.value })
+              }
+              className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              placeholder="Optional"
+            />
+          </div>
+
+          {/* Birthday */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Birthday
+            </label>
+            <input
+              type="date"
+              value={newCustomer.birthday}
+              onChange={(e) =>
+                setNewCustomer({ ...newCustomer, birthday: e.target.value })
+              }
+              className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+            />
+          </div>
+
+          {/* Address */}
+          <div className="md:col-span-2">
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              Address
+            </label>
+            <textarea
+              value={newCustomer.address}
+              onChange={(e) =>
+                setNewCustomer({ ...newCustomer, address: e.target.value })
+              }
+              className="w-full border border-gray-300 rounded-lg px-4 py-2 h-24 resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500"
+              placeholder="Optional"
+            />
+          </div>
+        </div>
+
+        {/* ✅ Action buttons */}
+        <div className="mt-8 flex justify-end space-x-3">
+          <button
+            type="button"
+            onClick={() => setIsModalOpen(false)}
+            className="px-5 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition"
           >
-            <motion.div
-              className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] overflow-y-auto p-8"
-              initial={{ scale: 0.95, y: 20, opacity: 0 }}
-              animate={{ scale: 1, y: 0, opacity: 1 }}
-              exit={{ scale: 0.95, y: 20, opacity: 0 }}
-              transition={{ duration: 0.3 }}
-            >
-              <h2 className="text-2xl font-semibold text-gray-800 mb-6">
-                Add New Customer
-              </h2>
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Name */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Full Name <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={newCustomer.name}
-                    onChange={(e) =>
-                      setNewCustomer({ ...newCustomer, name: e.target.value })
-                    }
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    placeholder="Enter full name"
-                    required
-                  />
-                </div>
-
-                {/* Contact */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Contact Number <span className="text-red-500">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    value={newCustomer.contact}
-                    onChange={(e) =>
-                      setNewCustomer({
-                        ...newCustomer,
-                        contact: e.target.value,
-                      })
-                    }
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    placeholder="e.g. 09XXXXXXXXX"
-                    required
-                  />
-                </div>
-
-                {/* Email */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Email Address
-                  </label>
-                  <input
-                    type="email"
-                    value={newCustomer.email}
-                    onChange={(e) =>
-                      setNewCustomer({ ...newCustomer, email: e.target.value })
-                    }
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    placeholder="Optional"
-                  />
-                </div>
-
-                {/* Birthday */}
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Birthday
-                  </label>
-                  <input
-                    type="date"
-                    value={newCustomer.birthday}
-                    onChange={(e) =>
-                      setNewCustomer({
-                        ...newCustomer,
-                        birthday: e.target.value,
-                      })
-                    }
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                  />
-                </div>
-
-                {/* Address (full width) */}
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-1">
-                    Address
-                  </label>
-                  <textarea
-                    value={newCustomer.address}
-                    onChange={(e) =>
-                      setNewCustomer({
-                        ...newCustomer,
-                        address: e.target.value,
-                      })
-                    }
-                    className="w-full border border-gray-300 rounded-lg px-4 py-2 h-24 resize-none focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                    placeholder="Optional"
-                  />
-                </div>
-              </div>
-
-              {/* Action buttons */}
-              <div className="mt-8 flex justify-end space-x-3">
-                <button
-                  onClick={() => setIsModalOpen(false)}
-                  className="px-5 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition"
-                >
-                  Cancel
-                </button>
-                <button
-                  onClick={handleAddCustomer}
-                  className="px-5 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition"
-                >
-                  Save
-                </button>
-              </div>
-            </motion.div>
-          </motion.div>
-        )}
+            Cancel
+          </button>
+          <button
+            type="submit" // ✅ use submit instead of onClick
+            className="px-5 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition"
+          >
+            Save
+          </button>
+        </div>
+      </form>
+    </motion.div>
+  </motion.div>
+)}
       </AnimatePresence>
 
       <AnimatePresence>

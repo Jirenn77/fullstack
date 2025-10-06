@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Fragment } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { Toaster, toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu } from "@headlessui/react";
+import { Menu, Transition, Dialog } from "@headlessui/react";
 import { EllipsisVerticalIcon } from "@heroicons/react/24/solid";
 import {
   Calendar,
@@ -30,7 +30,7 @@ import {
   Leaf,
   BarChart2,
   Plus,
-  ShoppingBag,
+  Info,
   User,
   Star,
   ArrowRight,
@@ -109,6 +109,11 @@ export default function ServiceOrderPage() {
     useState(false);
   const [serviceCategoriesWithMembers, setServiceCategoriesWithMembers] =
     useState(serviceCategories);
+  const [isPromoListOpen, setIsPromoListOpen] = useState(false);
+  const [isBundleListOpen, setIsBundleListOpen] = useState(false);
+  const [bundles, setBundles] = useState([]);
+  const [bundleServiceMap, setBundleServiceMap] = useState({});
+  const [selectedPromoServices, setSelectedPromoServices] = useState({});
 
   const [customerName, setCustomerName] = useState("");
   const [membershipType, setMembershipType] = useState("Standard");
@@ -122,7 +127,12 @@ export default function ServiceOrderPage() {
   const [isMember, setIsMember] = useState(true);
   const premiumServiceIds = membershipServices.map((s) => s.id);
   const premiumSubtotal = selectedServices
-    .filter((service) => premiumServiceIds.includes(service.id))
+    .filter(
+      (service) =>
+        premiumServiceIds.includes(service.id) &&
+        !service.isFromPromo &&
+        !service.isFromBundle
+    )
     .reduce((sum, service) => sum + service.price * service.quantity, 0);
   const membershipReduction = isMember ? premiumSubtotal * 0.5 : 0;
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
@@ -225,15 +235,19 @@ export default function ServiceOrderPage() {
     });
   };
 
-  const removeService = (id) => {
-    setSelectedServices((prev) => prev.filter((s) => s.id !== id));
-  };
-
-  const updateQuantity = (id, newQty) => {
-    if (newQty < 1) return;
+  const removeService = (serviceId) => {
     setSelectedServices((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, quantity: newQty } : s))
+      prev.filter((service) => service.id !== serviceId)
     );
+
+    // Also check if we need to remove the promo application
+    const remainingPromoServices = selectedServices.filter(
+      (service) => service.isFromPromo && service.id !== serviceId
+    );
+
+    if (remainingPromoServices.length === 0 && promoApplied) {
+      setPromoApplied(null);
+    }
   };
 
   useEffect(() => {
@@ -282,6 +296,60 @@ export default function ServiceOrderPage() {
     };
 
     fetchPromosAndDiscounts();
+  }, []);
+
+  useEffect(() => {
+    const fetchBundles = async () => {
+      try {
+        const response = await fetch("http://localhost/API/bundles.php");
+        if (!response.ok) {
+          throw new Error("Network response was not ok");
+        }
+
+        const data = await response.json();
+
+        // ✅ if API wraps bundles inside an object
+        if (Array.isArray(data)) {
+          setBundles(data);
+        } else if (Array.isArray(data.bundles)) {
+          setBundles(data.bundles);
+        } else {
+          setBundles([]);
+        }
+      } catch (error) {
+        setError(error.message);
+        toast.error("Failed to fetch bundles: " + error.message);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchBundles();
+  }, []);
+
+  useEffect(() => {
+    const fetchBundleServices = async () => {
+      try {
+        const response = await fetch("http://localhost/API/bundles.php");
+        if (!response.ok) throw new Error("Failed to fetch bundle services");
+
+        const data = await response.json();
+
+        // ✅ Fix: Handle the response structure properly
+        const bundles = data.bundles || []; // Access the bundles array
+
+        const map = {};
+        bundles.forEach((bundle) => {
+          map[bundle.id] = bundle.services || []; // Use 'id' instead of 'bundle_id'
+        });
+
+        setBundleServiceMap(map);
+      } catch (error) {
+        console.error("Error fetching bundle services:", error);
+      }
+    };
+
+    fetchBundleServices();
   }, []);
 
   const fetchPremiumServices = async (membershipType) => {
@@ -457,6 +525,27 @@ export default function ServiceOrderPage() {
       console.error("Save failed", err);
       toast.error("Network error occurred");
     }
+  };
+
+  // Add these helper functions
+  const calculateTotalOriginalPrice = (services) => {
+    if (!services || !Array.isArray(services)) return 0;
+    return services.reduce((total, service) => {
+      return total + parseFloat(service.price || service.originalPrice || 0);
+    }, 0);
+  };
+
+  const calculateBundleSavings = (bundle, services) => {
+    if (
+      !services ||
+      !Array.isArray(services) ||
+      !services.length ||
+      !bundle.price
+    )
+      return 0;
+
+    const totalOriginalPrice = calculateTotalOriginalPrice(services);
+    return totalOriginalPrice - parseFloat(bundle.price);
   };
 
   const handleNewTransaction = () => {
@@ -998,10 +1087,11 @@ export default function ServiceOrderPage() {
                     transition={{ delay: (step - 1) * 0.1 }}
                   >
                     <div
-                      className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${currentStep >= step
-                        ? "bg-emerald-600 border-emerald-600 text-white"
-                        : "border-gray-300 bg-white"
-                        }`}
+                      className={`w-10 h-10 rounded-full flex items-center justify-center border-2 ${
+                        currentStep >= step
+                          ? "bg-emerald-600 border-emerald-600 text-white"
+                          : "border-gray-300 bg-white"
+                      }`}
                     >
                       {step}
                     </div>
@@ -1012,8 +1102,9 @@ export default function ServiceOrderPage() {
 
                   {step < 4 && (
                     <motion.div
-                      className={`flex-1 mx-2 mt-5 h-1 ${currentStep > step ? "bg-emerald-600" : "bg-gray-200"
-                        }`}
+                      className={`flex-1 mx-2 mt-5 h-1 ${
+                        currentStep > step ? "bg-emerald-600" : "bg-gray-200"
+                      }`}
                       initial={{ scaleX: 0 }}
                       animate={{ scaleX: 1 }}
                       transition={{ duration: 0.3, delay: 0.2 }}
@@ -1048,10 +1139,11 @@ export default function ServiceOrderPage() {
                             </h3>
                             <div className="flex items-center mt-1">
                               <span
-                                className={`text-xs px-2 py-1 rounded-full ${isMember
-                                  ? "bg-emerald-100 text-emerald-800"
-                                  : "bg-gray-100 text-gray-800"
-                                  }`}
+                                className={`text-xs px-2 py-1 rounded-full ${
+                                  isMember
+                                    ? "bg-emerald-100 text-emerald-800"
+                                    : "bg-gray-100 text-gray-800"
+                                }`}
                               >
                                 {isMember ? "Member" : "Regular Customer"}
                               </span>
@@ -1092,7 +1184,7 @@ export default function ServiceOrderPage() {
                                 {Math.max(
                                   0,
                                   membershipBalance -
-                                  (useMembership ? membershipReduction : 0)
+                                    (useMembership ? membershipReduction : 0)
                                 ).toLocaleString()}
                               </span>
                             </div>
@@ -1207,10 +1299,11 @@ export default function ServiceOrderPage() {
                   <motion.button
                     disabled={!customerName}
                     onClick={() => setCurrentStep(2)}
-                    className={`px-6 py-2 rounded-lg flex items-center gap-2 ${customerName
-                      ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                      : "bg-gray-300 text-gray-500 cursor-not-allowed"
-                      }`}
+                    className={`px-6 py-2 rounded-lg flex items-center gap-2 ${
+                      customerName
+                        ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                        : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                    }`}
                     whileHover={customerName ? { scale: 1.03 } : {}}
                     whileTap={customerName ? { scale: 0.97 } : {}}
                   >
@@ -1250,10 +1343,11 @@ export default function ServiceOrderPage() {
                         <motion.button
                           key={category.id}
                           onClick={() => setActiveCategory(category.id)}
-                          className={`w-full px-4 py-3 rounded-lg text-left flex items-center justify-between ${activeCategory === category.id
-                            ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
-                            : "hover:bg-gray-50"
-                            }`}
+                          className={`w-full px-4 py-3 rounded-lg text-left flex items-center justify-between ${
+                            activeCategory === category.id
+                              ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                              : "hover:bg-gray-50"
+                          }`}
                           whileHover={{ scale: 1.01 }}
                           whileTap={{ scale: 0.99 }}
                         >
@@ -1284,20 +1378,21 @@ export default function ServiceOrderPage() {
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                           {(activeCategory === "members-exclusive"
                             ? serviceCategories.find(
-                              (cat) => cat.id === "members-exclusive"
-                            )?.services || []
+                                (cat) => cat.id === "members-exclusive"
+                              )?.services || []
                             : serviceCategories.find(
-                              (cat) => cat.id === activeCategory
-                            )?.services || []
+                                (cat) => cat.id === activeCategory
+                              )?.services || []
                           ).map((service) => (
                             <motion.div
                               key={service.id}
-                              className={`p-4 border rounded-lg cursor-pointer transition-all ${selectedServices.some(
-                                (s) => s.id === service.id
-                              )
-                                ? "border-emerald-500 bg-emerald-50"
-                                : "border-gray-200 hover:border-emerald-300"
-                                }`}
+                              className={`p-4 border rounded-lg cursor-pointer transition-all ${
+                                selectedServices.some(
+                                  (s) => s.id === service.id
+                                )
+                                  ? "border-emerald-500 bg-emerald-50"
+                                  : "border-gray-200 hover:border-emerald-300"
+                              }`}
                               onClick={() => handleServiceToggle(service)}
                               whileHover={{ y: -2 }}
                               initial={{ opacity: 0, y: 10 }}
@@ -1333,17 +1428,24 @@ export default function ServiceOrderPage() {
                 {/* Selected Services & Summary */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   {/* Selected Services */}
-                  <div className="lg:col-span-2 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                  <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
                     {/* Header */}
-                    <div className="flex justify-between items-center mb-4 sticky top-0 bg-white z-10 pb-2 border-b">
-                      <h2 className="font-semibold flex items-center">
-                        <ShoppingCart className="mr-2" size={18} />
-                        Selected Services ({selectedServices.length})
+                    <div className="flex justify-between items-center mb-4">
+                      <h2 className="font-semibold text-gray-900 flex items-center text-lg">
+                        <ShoppingCart className="mr-2" size={20} />
+                        Selected Services
+                        <span className="ml-2 bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm">
+                          {selectedServices.length}
+                        </span>
                       </h2>
                       {selectedServices.length > 0 && (
                         <button
-                          onClick={() => setSelectedServices([])}
-                          className="text-sm text-red-500 hover:text-red-700 flex items-center"
+                          onClick={() => {
+                            setSelectedServices([]);
+                            setSelectedPromoServices({});
+                            setPromoApplied(null);
+                          }}
+                          className="text-sm text-red-600 hover:text-red-800 flex items-center transition-colors"
                         >
                           <Trash2 className="mr-1" size={16} />
                           Clear All
@@ -1352,65 +1454,133 @@ export default function ServiceOrderPage() {
                     </div>
 
                     {/* Scrollable list */}
-                    <div className="max-h-80 overflow-y-auto space-y-2 pr-2">
-                      {selectedServices.map((service, index) => (
-                        <motion.div
-                          key={`${service.id}-${index}`}
-                          className="grid grid-cols-[1fr_auto_auto] items-center gap-4 p-3 bg-gray-50 rounded-lg border border-gray-200"
-                          initial={{ opacity: 0, x: -10 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          exit={{ opacity: 0, x: 10 }}
-                          transition={{ delay: index * 0.05 }}
-                        >
-                          {/* Left: remove + service info */}
-                          <div className="flex items-center gap-3">
+                    <div className="max-h-96 overflow-y-auto space-y-3 pr-2">
+                      {selectedServices.length === 0 ? (
+                        <div className="text-center py-8 text-gray-500">
+                          <ShoppingCart
+                            size={48}
+                            className="mx-auto mb-3 text-gray-300"
+                          />
+                          <p>No services selected yet</p>
+                          <p className="text-sm mt-1">
+                            Choose services from the list or browse promos
+                          </p>
+                        </div>
+                      ) : (
+                        selectedServices.map((service, index) => (
+                          <motion.div
+                            key={`${service.id}-${index}`}
+                            className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 p-4 bg-white rounded-lg border border-gray-200 hover:border-blue-200 transition-colors"
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            exit={{ opacity: 0, x: 10 }}
+                            transition={{ delay: index * 0.05 }}
+                          >
+                            {/* Remove button */}
                             <button
                               onClick={(e) => {
                                 e.stopPropagation();
                                 removeService(service.id);
+
+                                // Also remove from selectedPromoServices if it's from a promo
+                                if (service.isFromPromo && service.promoId) {
+                                  setSelectedPromoServices((prev) => ({
+                                    ...prev,
+                                    [service.promoId]: {
+                                      ...prev[service.promoId],
+                                      [service.id]: false,
+                                    },
+                                  }));
+                                }
                               }}
-                              className="text-red-500 hover:text-red-700"
+                              className="text-red-500 hover:text-red-700 transition-colors p-1 rounded"
                             >
-                              <X size={16} />
+                              <X size={18} />
                             </button>
-                            <div>
-                              <p className="font-medium">{service.name}</p>
-                              <p className="text-xs text-gray-500">
-                                {serviceCategories.find((cat) =>
-                                  cat.services.some((s) => s.id === service.id)
-                                )?.name || "General"}
+
+                            {/* Service info */}
+                            <div className="min-w-0">
+                              <p className="font-medium text-gray-900 truncate">
+                                {service.name}
                               </p>
+                              <div className="flex items-center space-x-2 mt-1">
+                                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                                  {serviceCategories.find((cat) =>
+                                    cat.services.some(
+                                      (s) => s.id === service.id
+                                    )
+                                  )?.name || "General"}
+                                </span>
+                                {service.isFromPromo && (
+                                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                                    Promo Discount
+                                  </span>
+                                )}
+                                {service.isFromBundle && (
+                                  <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded">
+                                    Bundle
+                                  </span>
+                                )}
+                              </div>
                             </div>
-                          </div>
 
-                          {/* Middle: quantity controls */}
-                          <div className="flex items-center gap-2 justify-center">
-                            <button
-                              onClick={() => updateQuantity(service.id, service.quantity - 1)}
-                              className="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300"
-                              disabled={service.quantity === 1}
-                            >
-                              -
-                            </button>
-                            <span className="w-6 text-center">{service.quantity}</span>
-                            <button
-                              onClick={() => updateQuantity(service.id, service.quantity + 1)}
-                              className="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300"
-                            >
-                              +
-                            </button>
-                          </div>
+                            {/* Quantity controls */}
+                            <div className="flex items-center gap-2 bg-gray-50 rounded-lg p-1">
+                              <button
+                                onClick={() =>
+                                  updateQuantity(
+                                    service.id,
+                                    service.quantity - 1
+                                  )
+                                }
+                                className="w-8 h-8 flex items-center justify-center bg-white border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                                disabled={service.quantity === 1}
+                              >
+                                -
+                              </button>
+                              <span className="w-8 text-center font-medium text-gray-900">
+                                {service.quantity}
+                              </span>
+                              <button
+                                onClick={() =>
+                                  updateQuantity(
+                                    service.id,
+                                    service.quantity + 1
+                                  )
+                                }
+                                className="w-8 h-8 flex items-center justify-center bg-white border border-gray-300 rounded hover:bg-gray-100"
+                              >
+                                +
+                              </button>
+                            </div>
 
-                          {/* Right: total price */}
-                          <span className="font-bold text-right">
-                            ₱
-                            {(service.price * service.quantity).toLocaleString("en-PH", {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            })}
-                          </span>
-                        </motion.div>
-                      ))}
+                            {/* Price */}
+                            <div className="text-right min-w-24">
+                              <div className="font-bold text-gray-900">
+                                ₱
+                                {(
+                                  service.price * service.quantity
+                                ).toLocaleString("en-PH", {
+                                  minimumFractionDigits: 2,
+                                  maximumFractionDigits: 2,
+                                })}
+                              </div>
+                              {service.originalPrice &&
+                                service.originalPrice > service.price && (
+                                  <div className="text-xs text-gray-500 line-through">
+                                    ₱
+                                    {(
+                                      service.originalPrice * service.quantity
+                                    ).toLocaleString("en-PH", {
+                                      minimumFractionDigits: 2,
+                                      maximumFractionDigits: 2,
+                                    })}
+                                  </div>
+                                )}
+                            </div>
+                          </motion.div>
+                        ))
+                      )}
                     </div>
                   </div>
 
@@ -1456,9 +1626,9 @@ export default function ServiceOrderPage() {
                           <span>
                             {formatCurrency(
                               calculatedSubtotal -
-                              promoReduction -
-                              discountReduction -
-                              (useMembership ? membershipReduction : 0)
+                                promoReduction -
+                                discountReduction -
+                                (useMembership ? membershipReduction : 0)
                             )}
                           </span>
                         </div>
@@ -1473,57 +1643,6 @@ export default function ServiceOrderPage() {
                       </h3>
 
                       <div className="space-y-3">
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-1">
-                            Promo
-                          </label>
-                          <select
-                            value={promoApplied?.id || ""}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              if (value) {
-                                const selectedPromo =
-                                  promos.find((p) => p.id == value) || null;
-                                setPromoApplied(selectedPromo);
-
-                                // Add discounted services from the promo
-                                if (
-                                  selectedPromo &&
-                                  dealServiceMap[selectedPromo.id]
-                                ) {
-                                  const promoServices = dealServiceMap[
-                                    selectedPromo.id
-                                  ].map((s) => ({
-                                    id: s.service_id,
-                                    name: s.name,
-                                    category: s.category,
-                                    price: parseFloat(s.discountedPrice), // use discounted price
-                                    quantity: 1,
-                                  }));
-
-                                  // Merge with existing selected services
-                                  setSelectedServices((prev) => [
-                                    ...prev,
-                                    ...promoServices,
-                                  ]);
-                                }
-                              } else {
-                                setPromoApplied(null);
-                              }
-                            }}
-                            className="w-full p-2 text-sm border border-gray-300 rounded-lg"
-                          >
-                            <option value="">Select Promo</option>
-                            {promos
-                              .filter((p) => p.status === "active")
-                              .map((promo) => (
-                                <option key={promo.id} value={promo.id}>
-                                  {promo.name}
-                                </option>
-                              ))}
-                          </select>
-                        </div>
-
                         <div>
                           <label className="block text-xs text-gray-500 mb-1">
                             Discount
@@ -1557,15 +1676,622 @@ export default function ServiceOrderPage() {
                       </div>
                     </div>
 
+                    <div className="mb-4">
+                      <h3 className="text-sm font-medium mb-2 flex items-center">
+                        <Info className="mr-2" size={16} />
+                        View Available Offers
+                      </h3>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <motion.button
+                          onClick={() => setIsPromoListOpen(true)}
+                          className="flex items-center justify-center space-x-2 py-2 px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg border border-blue-200 text-sm"
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                        >
+                          <Tag size={16} />
+                          <span>View Promos</span>
+                        </motion.button>
+
+                        <motion.button
+                          onClick={() => setIsBundleListOpen(true)}
+                          className="flex items-center justify-center space-x-2 py-2 px-3 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg border border-purple-200 text-sm"
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                        >
+                          <Package size={16} />
+                          <span>View Bundles</span>
+                        </motion.button>
+                      </div>
+                    </div>
+
+                    {/* Promo List Modal */}
+                    <Transition appear show={isPromoListOpen} as={Fragment}>
+                      <Dialog
+                        as="div"
+                        className="relative z-50"
+                        onClose={() => setIsPromoListOpen(false)}
+                      >
+                        <Transition.Child
+                          as={Fragment}
+                          enter="ease-out duration-300"
+                          enterFrom="opacity-0"
+                          enterTo="opacity-100"
+                          leave="ease-in duration-200"
+                          leaveFrom="opacity-100"
+                          leaveTo="opacity-0"
+                        >
+                          <div className="fixed inset-0 bg-black bg-opacity-25" />
+                        </Transition.Child>
+
+                        <div className="fixed inset-0 overflow-y-auto">
+                          <div className="flex min-h-full items-center justify-center p-4 text-center">
+                            <Transition.Child
+                              as={Fragment}
+                              enter="ease-out duration-300"
+                              enterFrom="opacity-0 scale-95"
+                              enterTo="opacity-100 scale-100"
+                              leave="ease-in duration-200"
+                              leaveFrom="opacity-100 scale-100"
+                              leaveTo="opacity-0 scale-95"
+                            >
+                              <Dialog.Panel className="w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all">
+                                <div className="flex justify-between items-center mb-6">
+                                  <Dialog.Title
+                                    as="h3"
+                                    className="text-lg font-semibold text-gray-900"
+                                  >
+                                    Available Promotions
+                                  </Dialog.Title>
+                                  <button
+                                    onClick={() => setIsPromoListOpen(false)}
+                                    className="text-gray-500 hover:text-gray-700"
+                                  >
+                                    <X size={24} />
+                                  </button>
+                                </div>
+
+                                <div className="grid gap-6 max-h-[70vh] overflow-y-auto pr-2">
+                                  {promos
+                                    .filter((p) => p.status === "active")
+                                    .map((promo) => (
+                                      <motion.div
+                                        key={promo.id}
+                                        className="border border-gray-200 rounded-lg p-6 hover:border-blue-300 transition-colors"
+                                        whileHover={{ scale: 1.005 }}
+                                      >
+                                        {/* Promo Header */}
+                                        <div className="flex justify-between items-start mb-4">
+                                          <div>
+                                            <h4 className="font-semibold text-gray-900 text-lg">
+                                              {promo.name}
+                                            </h4>
+                                            <p className="text-sm text-gray-600 mt-1">
+                                              {promo.description}
+                                            </p>
+                                          </div>
+                                          <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
+                                            {promo.discountValue}
+                                            {promo.discountType === "percentage"
+                                              ? "%"
+                                              : ""}{" "}
+                                            OFF
+                                          </span>
+                                        </div>
+
+                                        {/* Promo Details */}
+                                        <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+                                          <div>
+                                            <span className="text-gray-500">
+                                              Valid:{" "}
+                                            </span>
+                                            <span className="text-gray-700">
+                                              {promo.validFrom} to{" "}
+                                              {promo.validTo}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="text-gray-500">
+                                              Type:{" "}
+                                            </span>
+                                            <span className="capitalize text-gray-700">
+                                              {promo.discountType}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        {/* Included Services with Selection */}
+                                        {dealServiceMap[promo.id] &&
+                                          dealServiceMap[promo.id].length >
+                                            0 && (
+                                            <div className="mt-4">
+                                              <div className="flex justify-between items-center mb-3">
+                                                <h5 className="text-sm font-medium text-gray-700">
+                                                  Select Services to Add:
+                                                </h5>
+                                                <div className="flex items-center space-x-2">
+                                                  <button
+                                                    onClick={() => {
+                                                      // Select all services
+                                                      const allSelected = {};
+                                                      dealServiceMap[
+                                                        promo.id
+                                                      ].forEach((service) => {
+                                                        allSelected[
+                                                          service.service_id
+                                                        ] = true;
+                                                      });
+                                                      setSelectedPromoServices(
+                                                        (prev) => ({
+                                                          ...prev,
+                                                          [promo.id]:
+                                                            allSelected,
+                                                        })
+                                                      );
+                                                    }}
+                                                    className="text-xs text-blue-600 hover:text-blue-800"
+                                                  >
+                                                    Select All
+                                                  </button>
+                                                  <button
+                                                    onClick={() => {
+                                                      // Deselect all services
+                                                      setSelectedPromoServices(
+                                                        (prev) => ({
+                                                          ...prev,
+                                                          [promo.id]: {},
+                                                        })
+                                                      );
+                                                    }}
+                                                    className="text-xs text-gray-600 hover:text-gray-800"
+                                                  >
+                                                    Deselect All
+                                                  </button>
+                                                </div>
+                                              </div>
+
+                                              <div className="space-y-2 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-3 bg-gray-50">
+                                                {dealServiceMap[promo.id].map(
+                                                  (service, index) => (
+                                                    <label
+                                                      key={service.service_id}
+                                                      className="flex items-center justify-between p-2 hover:bg-white rounded cursor-pointer transition-colors"
+                                                    >
+                                                      <div className="flex items-center space-x-3">
+                                                        <input
+                                                          type="checkbox"
+                                                          checked={
+                                                            selectedPromoServices[
+                                                              promo.id
+                                                            ]?.[
+                                                              service.service_id
+                                                            ] || false
+                                                          }
+                                                          onChange={(e) => {
+                                                            setSelectedPromoServices(
+                                                              (prev) => ({
+                                                                ...prev,
+                                                                [promo.id]: {
+                                                                  ...prev[
+                                                                    promo.id
+                                                                  ],
+                                                                  [service.service_id]:
+                                                                    e.target
+                                                                      .checked,
+                                                                },
+                                                              })
+                                                            );
+                                                          }}
+                                                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                                        />
+                                                        <div>
+                                                          <div className="text-sm font-medium text-gray-800">
+                                                            {service.name}
+                                                          </div>
+                                                          <div className="text-xs text-gray-500">
+                                                            {service.category}
+                                                          </div>
+                                                        </div>
+                                                      </div>
+                                                      <div className="text-right">
+                                                        <div className="text-sm font-semibold text-green-600">
+                                                          ₱
+                                                          {
+                                                            service.discountedPrice
+                                                          }
+                                                        </div>
+                                                        <div className="text-xs text-gray-500 line-through">
+                                                          ₱
+                                                          {
+                                                            service.originalPrice
+                                                          }
+                                                        </div>
+                                                      </div>
+                                                    </label>
+                                                  )
+                                                )}
+                                              </div>
+                                            </div>
+                                          )}
+
+                                        {/* Action Buttons */}
+                                        <div className="mt-4 flex justify-between items-center">
+                                          <div className="text-sm text-gray-600">
+                                            {selectedPromoServices[promo.id]
+                                              ? `${Object.values(selectedPromoServices[promo.id] || {}).filter(Boolean).length} services selected`
+                                              : "No services selected"}
+                                          </div>
+                                          <div className="flex space-x-2">
+                                            <button
+                                              onClick={() => {
+                                                setSelectedPromoServices(
+                                                  (prev) => ({
+                                                    ...prev,
+                                                    [promo.id]: {},
+                                                  })
+                                                );
+                                                setIsPromoListOpen(false);
+                                              }}
+                                              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm"
+                                            >
+                                              Cancel
+                                            </button>
+                                            <button
+                                              onClick={() => {
+                                                // Add selected services to cart
+                                                if (
+                                                  selectedPromoServices[
+                                                    promo.id
+                                                  ]
+                                                ) {
+                                                  const selectedServicesFromPromo =
+                                                    dealServiceMap[promo.id]
+                                                      .filter(
+                                                        (service) =>
+                                                          selectedPromoServices[
+                                                            promo.id
+                                                          ]?.[
+                                                            service.service_id
+                                                          ]
+                                                      )
+                                                      .map((service) => ({
+                                                        id: service.service_id,
+                                                        name: service.name,
+                                                        category:
+                                                          service.category,
+                                                        price: parseFloat(
+                                                          service.discountedPrice
+                                                        ),
+                                                        originalPrice:
+                                                          parseFloat(
+                                                            service.originalPrice
+                                                          ),
+                                                        quantity: 1,
+                                                        isFromPromo: true,
+                                                        promoId: promo.id,
+                                                        discountValue:
+                                                          promo.discountValue,
+                                                        discountType:
+                                                          promo.discountType,
+                                                      }));
+
+                                                  if (
+                                                    selectedServicesFromPromo.length >
+                                                    0
+                                                  ) {
+                                                    setSelectedServices(
+                                                      (prev) => [
+                                                        ...prev,
+                                                        ...selectedServicesFromPromo,
+                                                      ]
+                                                    );
+                                                    setPromoApplied(promo);
+                                                    toast.success(
+                                                      `${selectedServicesFromPromo.length} service(s) added from promo!`
+                                                    );
+                                                  } else {
+                                                    toast.info(
+                                                      "Please select at least one service from the promo"
+                                                    );
+                                                    return;
+                                                  }
+                                                }
+                                                setIsPromoListOpen(false);
+                                              }}
+                                              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm"
+                                            >
+                                              Add Selected Services
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </motion.div>
+                                    ))}
+
+                                  {promos.filter((p) => p.status === "active")
+                                    .length === 0 && (
+                                    <div className="text-center py-12 text-gray-500">
+                                      <Tag
+                                        size={48}
+                                        className="mx-auto mb-3 text-gray-300"
+                                      />
+                                      <p className="text-lg">
+                                        No active promotions available
+                                      </p>
+                                      <p className="text-sm mt-1">
+                                        Check back later for new promotions
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              </Dialog.Panel>
+                            </Transition.Child>
+                          </div>
+                        </div>
+                      </Dialog>
+                    </Transition>
+
+                    {/* Bundle List Modal */}
+                    <Transition appear show={isBundleListOpen} as={Fragment}>
+                      <Dialog
+                        as="div"
+                        className="relative z-50"
+                        onClose={() => setIsBundleListOpen(false)}
+                      >
+                        <Transition.Child
+                          as={Fragment}
+                          enter="ease-out duration-300"
+                          enterFrom="opacity-0"
+                          enterTo="opacity-100"
+                          leave="ease-in duration-200"
+                          leaveFrom="opacity-100"
+                          leaveTo="opacity-0"
+                        >
+                          <div className="fixed inset-0 bg-black bg-opacity-25" />
+                        </Transition.Child>
+
+                        <div className="fixed inset-0 overflow-y-auto">
+                          <div className="flex min-h-full items-center justify-center p-4 text-center">
+                            <Transition.Child
+                              as={Fragment}
+                              enter="ease-out duration-300"
+                              enterFrom="opacity-0 scale-95"
+                              enterTo="opacity-100 scale-100"
+                              leave="ease-in duration-200"
+                              leaveFrom="opacity-100 scale-100"
+                              leaveTo="opacity-0 scale-95"
+                            >
+                              <Dialog.Panel className="w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all">
+                                <div className="flex justify-between items-center mb-6">
+                                  <Dialog.Title
+                                    as="h3"
+                                    className="text-lg font-semibold text-gray-900"
+                                  >
+                                    Available Bundles
+                                  </Dialog.Title>
+                                  <button
+                                    onClick={() => setIsBundleListOpen(false)}
+                                    className="text-gray-500 hover:text-gray-700"
+                                  >
+                                    <X size={24} />
+                                  </button>
+                                </div>
+
+                                <div className="grid gap-6 max-h-[70vh] overflow-y-auto pr-2">
+                                  {bundles
+                                    .filter((b) => b.status === "active")
+                                    .map((bundle) => (
+                                      <motion.div
+                                        key={bundle.id}
+                                        className="border border-gray-200 rounded-lg p-6 hover:border-purple-300 transition-colors"
+                                        whileHover={{ scale: 1.005 }}
+                                      >
+                                        {/* Bundle Header */}
+                                        <div className="flex justify-between items-start mb-4">
+                                          <div>
+                                            <h4 className="font-semibold text-gray-900 text-lg">
+                                              {bundle.name}
+                                            </h4>
+                                            <p className="text-sm text-gray-600 mt-1">
+                                              {bundle.description}
+                                            </p>
+                                          </div>
+                                          <div className="text-right">
+                                            <div className="bg-purple-100 text-purple-800 px-3 py-2 rounded-lg text-sm font-bold">
+                                              ₱
+                                              {parseFloat(bundle.price).toFixed(
+                                                2
+                                              )}
+                                            </div>
+                                            <div className="text-xs text-purple-600 mt-1">
+                                              Bundle Price
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {/* Bundle Details */}
+                                        <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+                                          <div>
+                                            <span className="text-gray-500">
+                                              Valid:{" "}
+                                            </span>
+                                            <span className="text-gray-700">
+                                              {bundle.validFrom || "No expiry"}{" "}
+                                              to {bundle.validTo || "No expiry"}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="text-gray-500">
+                                              Includes:{" "}
+                                            </span>
+                                            <span className="text-gray-700 font-medium">
+                                              {bundleServiceMap[bundle.id]
+                                                ?.length || 0}{" "}
+                                              services
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        {/* Included Services */}
+                                        {bundleServiceMap[bundle.id] &&
+                                          bundleServiceMap[bundle.id].length >
+                                            0 && (
+                                            <div className="mt-4">
+                                              <h5 className="text-sm font-medium text-gray-700 mb-3">
+                                                Included Services:
+                                              </h5>
+
+                                              <div className="space-y-2 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-3 bg-gray-50">
+                                                {bundleServiceMap[
+                                                  bundle.id
+                                                ].map((service, index) => (
+                                                  <div
+                                                    key={
+                                                      service.service_id ||
+                                                      service.id
+                                                    }
+                                                    className="flex items-center justify-between p-2 hover:bg-white rounded transition-colors"
+                                                  >
+                                                    <div className="flex items-center space-x-3">
+                                                      <div className="w-2 h-2 bg-purple-400 rounded-full"></div>
+                                                      <div>
+                                                        <div className="text-sm font-medium text-gray-800">
+                                                          {service.name}
+                                                        </div>
+                                                        <div className="text-xs text-gray-500">
+                                                          {service.category}
+                                                        </div>
+                                                      </div>
+                                                    </div>
+                                                    <div className="text-right">
+                                                      <div className="text-sm font-semibold text-gray-700">
+                                                        ₱
+                                                        {parseFloat(
+                                                          service.price ||
+                                                            service.originalPrice
+                                                        ).toFixed(2)}
+                                                      </div>
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
+
+                                        {/* Action Buttons */}
+                                        <div className="mt-4 flex justify-between items-center">
+                                          <div className="text-sm text-gray-600">
+                                            {bundleServiceMap[bundle.id]
+                                              ?.length || 0}{" "}
+                                            services included
+                                          </div>
+                                          <div className="flex space-x-2">
+                                            <button
+                                              onClick={() => {
+                                                setIsBundleListOpen(false);
+                                              }}
+                                              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm"
+                                            >
+                                              Cancel
+                                            </button>
+                                            <button
+                                              onClick={() => {
+                                                // Add all bundle services to cart
+                                                if (
+                                                  bundleServiceMap[bundle.id]
+                                                ) {
+                                                  const bundleServices =
+                                                    bundleServiceMap[
+                                                      bundle.id
+                                                    ].map((service) => ({
+                                                      id:
+                                                        service.service_id ||
+                                                        service.id,
+                                                      name: service.name,
+                                                      category:
+                                                        service.category,
+                                                      price:
+                                                        parseFloat(
+                                                          bundle.price
+                                                        ) /
+                                                        bundleServiceMap[
+                                                          bundle.id
+                                                        ].length,
+                                                      originalPrice: parseFloat(
+                                                        service.price ||
+                                                          service.originalPrice
+                                                      ),
+                                                      quantity: 1,
+                                                      isFromBundle: true,
+                                                      bundleId: bundle.id,
+                                                      bundleName: bundle.name,
+                                                    }));
+
+                                                  setSelectedServices(
+                                                    (prev) => {
+                                                      // Filter out any existing services from the same bundle to avoid duplicates
+                                                      const filteredPrev =
+                                                        prev.filter(
+                                                          (service) =>
+                                                            !service.isFromBundle ||
+                                                            service.bundleId !==
+                                                              bundle.id
+                                                        );
+                                                      return [
+                                                        ...filteredPrev,
+                                                        ...bundleServices,
+                                                      ];
+                                                    }
+                                                  );
+
+                                                  toast.success(
+                                                    `"${bundle.name}" bundle added to cart!`
+                                                  );
+                                                }
+                                                setIsBundleListOpen(false);
+                                              }}
+                                              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium flex items-center space-x-2"
+                                            >
+                                              <Package size={16} />
+                                              <span>Add Bundle to Cart</span>
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </motion.div>
+                                    ))}
+
+                                  {bundles.filter((b) => b.status === "active")
+                                    .length === 0 && (
+                                    <div className="text-center py-12 text-gray-500">
+                                      <Package
+                                        size={48}
+                                        className="mx-auto mb-3 text-gray-300"
+                                      />
+                                      <p className="text-lg">
+                                        No active bundles available
+                                      </p>
+                                      <p className="text-sm mt-1">
+                                        Check back later for new bundle offers
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              </Dialog.Panel>
+                            </Transition.Child>
+                          </div>
+                        </div>
+                      </Dialog>
+                    </Transition>
+
                     {/* Action Buttons */}
                     <div className="flex flex-col gap-2 mt-6">
                       <motion.button
                         onClick={() => setCurrentStep(3)}
                         disabled={selectedServices.length === 0}
-                        className={`w-full py-2 rounded-lg ${selectedServices.length > 0
-                          ? "bg-emerald-600 hover:bg-emerald-700 text-white"
-                          : "bg-gray-300 text-gray-500 cursor-not-allowed"
-                          }`}
+                        className={`w-full py-2 rounded-lg ${
+                          selectedServices.length > 0
+                            ? "bg-emerald-600 hover:bg-emerald-700 text-white"
+                            : "bg-gray-300 text-gray-500 cursor-not-allowed"
+                        }`}
                         whileHover={
                           selectedServices.length > 0 ? { scale: 1.01 } : {}
                         }
@@ -1625,7 +2351,7 @@ export default function ServiceOrderPage() {
                               {Math.max(
                                 0,
                                 membershipBalance -
-                                (useMembership ? membershipReduction : 0)
+                                  (useMembership ? membershipReduction : 0)
                               ).toLocaleString()}
                             </span>
                           </div>
@@ -1704,9 +2430,9 @@ export default function ServiceOrderPage() {
                                   sum + service.price * service.quantity,
                                 0
                               ) -
-                              promoReduction -
-                              discountReduction -
-                              (useMembership ? membershipReduction : 0)
+                                promoReduction -
+                                discountReduction -
+                                (useMembership ? membershipReduction : 0)
                             )}
                           </span>
                         </div>
@@ -1743,7 +2469,9 @@ export default function ServiceOrderPage() {
                                 )?.name || "General"}
                               </div>
                             </td>
-                            <td className="py-3 text-center">{service.quantity}</td>
+                            <td className="py-3 text-center">
+                              {service.quantity}
+                            </td>
                             <td className="py-3 text-right font-medium">
                               {formatCurrency(service.price * service.quantity)}
                             </td>
@@ -1753,7 +2481,6 @@ export default function ServiceOrderPage() {
                     </table>
                   </div>
                 </div>
-
 
                 {/* Action Buttons */}
                 <div className="flex justify-between">
@@ -1863,7 +2590,7 @@ export default function ServiceOrderPage() {
                               {Math.max(
                                 0,
                                 membershipBalance -
-                                (useMembership ? membershipReduction : 0)
+                                  (useMembership ? membershipReduction : 0)
                               ).toLocaleString(undefined, {
                                 minimumFractionDigits: 2,
                               })}
@@ -1955,10 +2682,10 @@ export default function ServiceOrderPage() {
                           <span>
                             {savedOrderData.discount.name}{" "}
                             {savedOrderData.discount.discount_type ===
-                              "percentage"
+                            "percentage"
                               ? `(${savedOrderData.discount.value || 0}%)`
                               : savedOrderData.discount.discount_type ===
-                                "fixed"
+                                  "fixed"
                                 ? `(-₱${(savedOrderData.discount.value || 0).toFixed(2)})`
                                 : ""}
                           </span>
@@ -1985,9 +2712,9 @@ export default function ServiceOrderPage() {
                                 (sum, s) => sum + s.price * s.quantity,
                                 0
                               ) -
-                              (promoReduction || 0) -
-                              (discountReduction || 0) -
-                              (useMembership ? membershipReduction : 0)
+                                (promoReduction || 0) -
+                                (discountReduction || 0) -
+                                (useMembership ? membershipReduction : 0)
                             )}
                           </span>
                         </div>
@@ -2023,11 +2750,11 @@ export default function ServiceOrderPage() {
                                 sum + service.price * service.quantity,
                               0
                             ) -
-                            (promoApplied ? promoReduction : 0) -
-                            (discount ? discountReduction : 0) -
-                            (isMember && useMembership
-                              ? membershipReduction
-                              : 0)
+                              (promoApplied ? promoReduction : 0) -
+                              (discount ? discountReduction : 0) -
+                              (isMember && useMembership
+                                ? membershipReduction
+                                : 0)
                           )}
                         </div>
                       </div>
@@ -2057,7 +2784,7 @@ export default function ServiceOrderPage() {
                   </button> */}
                   <div className="flex gap-3">
                     <button
-                      onClick={() => { }}
+                      onClick={() => {}}
                       className="px-6 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg flex items-center justify-center gap-2"
                     >
                       <Mail size={16} />

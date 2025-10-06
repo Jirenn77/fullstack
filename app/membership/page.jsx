@@ -52,11 +52,11 @@ export default function Memberships() {
   const servicesPerPage = 12;
   const [allServices, setAllServices] = useState([]);
   const [newMembership, setNewMembership] = useState({
-    name: "Basic", // Default to "Basic" to match type
-    type: "basic",
+    name: "",
+    type: "",
     description: "",
-    price: 3000,
-    consumable_amount: 5000,
+    price: "",
+    consumable_amount: "",
     no_expiration: true,
     valid_until: "",
   });
@@ -137,32 +137,30 @@ export default function Memberships() {
   };
 
   useEffect(() => {
-  if (editMembership) {
-    fetchPremiumServices(editMembership.membershipType).then((services) => {
-      setAllServices(services);
+    if (editMembership) {
+      fetchPremiumServices(editMembership.membershipType).then((services) => {
+        setAllServices(services);
 
-      const getServiceId = (s) => s.id ?? s.service_id;
-      const included = editMembership.includedServices || [];
+        const getServiceId = (s) => s.id ?? s.service_id;
+        const included = editMembership.includedServices || [];
 
-      const preselected = services.filter((s) =>
-        included.some((inc) => getServiceId(inc) === getServiceId(s))
-      );
+        const preselected = services.filter((s) =>
+          included.some((inc) => getServiceId(inc) === getServiceId(s))
+        );
 
-      setSelectedServices(preselected);
-    });
-  }
-}, [editMembership]);
+        setSelectedServices(preselected);
+      });
+    }
+  }, [editMembership]);
 
-// ✅ Use allServices here, not services
-const getServiceId = (s) => s.id ?? s.service_id;
+  // ✅ Use allServices here, not services
+  const getServiceId = (s) => s.id ?? s.service_id;
 
-const preselected = allServices.filter((s) =>
-  (editMembership?.includedServices || []).some(
-    (inc) => getServiceId(inc) === getServiceId(s)
-  )
-);
-
-
+  const preselected = allServices.filter((s) =>
+    (editMembership?.includedServices || []).some(
+      (inc) => getServiceId(inc) === getServiceId(s)
+    )
+  );
 
   const handleSearch = () => {
     toast(`Searching for: ${searchQuery}`);
@@ -644,7 +642,7 @@ const preselected = allServices.filter((s) =>
           {/* Menu Items with Active State Highlight */}
           <div className="w-full px-4 space-y-1 overflow-y-auto flex-grow custom-scrollbar">
             {/* Dashboard */}
-            <Menu as="div" className="relative w-full"> 
+            <Menu as="div" className="relative w-full">
               <Link href="/home" passHref>
                 <Menu.Button
                   as="div"
@@ -904,7 +902,7 @@ const preselected = allServices.filter((s) =>
                 </p>
               </div>
 
-              {/* <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
+              <div className="flex flex-col sm:flex-row gap-3 w-full sm:w-auto">
                 <motion.button
                   onClick={() => setIsModalOpen(true)}
                   className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg flex items-center justify-center gap-2 transition-colors"
@@ -914,7 +912,7 @@ const preselected = allServices.filter((s) =>
                   <Plus size={18} />
                   <span>New Membership</span>
                 </motion.button>
-              </div> */}
+              </div>
             </div>
 
             {/* Enhanced Table */}
@@ -1092,135 +1090,199 @@ const preselected = allServices.filter((s) =>
           <AnimatePresence>
             {isModalOpen && (
               <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                <div className="bg-white rounded-lg p-6 w-full max-w-md">
-                  <h3 className="text-lg font-bold mb-4">New Membership</h3>
+                <div className="bg-white rounded-xl p-6 w-full max-w-3xl shadow-lg">
+                  <h3 className="text-xl font-bold mb-6 text-gray-900">
+                    Add New Membership Type
+                  </h3>
 
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block mb-1">Membership Type</label>
-                      <select
-                        value={newMembership.type}
-                        onChange={(e) => {
-                          const type = e.target.value;
-                          setNewMembership({
-                            ...newMembership,
-                            type: type,
-                            name:
-                              type === "basic"
-                                ? "Basic"
-                                : type === "pro"
-                                  ? "Pro"
-                                  : "Promo", // Auto-set name based on type
-                            price:
-                              type === "basic"
-                                ? 3000
-                                : type === "pro"
-                                  ? 6000
-                                  : "",
-                            consumable_amount:
-                              type === "basic"
-                                ? 5000
-                                : type === "pro"
-                                  ? 10000
-                                  : "",
-                          });
-                        }}
-                        className="w-full p-2 border rounded"
-                      >
-                        <option value="basic">
-                          Basic (₱3,000 for 5,000 consumable)
-                        </option>
-                        <option value="pro">
-                          Pro (₱6,000 for 10,000 consumable)
-                        </option>
-                        <option value="promo">Promo (Custom)</option>
-                      </select>
+                  <div className="grid grid-cols-2 gap-4">
+                    {/* Left Column */}
+                    <div className="space-y-4">
+                      {/* Name */}
+                      <div>
+                        <label className="block mb-1 font-medium">Name</label>
+                        <input
+                          type="text"
+                          value={newMembership.name}
+                          onChange={(e) =>
+                            setNewMembership({
+                              ...newMembership,
+                              name: e.target.value,
+                            })
+                          }
+                          className="w-full p-2 border rounded"
+                          placeholder="e.g., Gold, Premium"
+                        />
+                      </div>
+
+                      {/* Type (changed to text input) */}
+                      <div>
+                        <label className="block mb-1 font-medium">Type</label>
+                        <input
+                          type="text"
+                          value={newMembership.type}
+                          onChange={(e) =>
+                            setNewMembership({
+                              ...newMembership,
+                              type: e.target.value,
+                            })
+                          }
+                          className="w-full p-2 border rounded"
+                          placeholder="e.g., pro, basic, promo, custom"
+                        />
+                      </div>
+
+                      {/* Discount */}
+                      <div>
+                        <label className="block mb-1 font-medium">
+                          Discount
+                        </label>
+                        <input
+                          type="text"
+                          value={newMembership.discount}
+                          onChange={(e) =>
+                            setNewMembership({
+                              ...newMembership,
+                              discount: e.target.value,
+                            })
+                          }
+                          className="w-full p-2 border rounded"
+                          placeholder="e.g., 50%"
+                        />
+                      </div>
+
+                      {/* Status */}
+                      <div>
+                        <label className="block mb-1 font-medium">Status</label>
+                        <select
+                          value={newMembership.status}
+                          onChange={(e) =>
+                            setNewMembership({
+                              ...newMembership,
+                              status: e.target.value,
+                            })
+                          }
+                          className="w-full p-2 border rounded"
+                        >
+                          <option value="active">Active</option>
+                          <option value="inactive">Inactive</option>
+                        </select>
+                      </div>
                     </div>
 
-                    {/* Show these fields only for promo memberships */}
-                    {newMembership.type === "promo" && (
-                      <>
+                    {/* Right Column */}
+                    <div className="space-y-4">
+                      {/* Price */}
+                      <div>
+                        <label className="block mb-1 font-medium">
+                          Price (₱)
+                        </label>
+                        <input
+                          type="number"
+                          value={newMembership.price}
+                          onChange={(e) =>
+                            setNewMembership({
+                              ...newMembership,
+                              price: e.target.value,
+                            })
+                          }
+                          className="w-full p-2 border rounded"
+                          placeholder="Enter price"
+                        />
+                      </div>
+
+                      {/* Consumable Amount */}
+                      <div>
+                        <label className="block mb-1 font-medium">
+                          Consumable Amount (₱)
+                        </label>
+                        <input
+                          type="number"
+                          value={newMembership.consumable_amount}
+                          onChange={(e) =>
+                            setNewMembership({
+                              ...newMembership,
+                              consumable_amount: e.target.value,
+                            })
+                          }
+                          className="w-full p-2 border rounded"
+                          placeholder="Enter consumable balance"
+                        />
+                      </div>
+
+                      {/* No Expiration */}
+                      <div className="flex items-center space-x-2">
+                        <input
+                          type="checkbox"
+                          checked={!!newMembership.no_expiration}
+                          onChange={(e) =>
+                            setNewMembership({
+                              ...newMembership,
+                              no_expiration: e.target.checked ? 1 : 0,
+                              valid_until: e.target.checked
+                                ? null
+                                : newMembership.valid_until,
+                            })
+                          }
+                        />
+                        <label>No Expiration</label>
+                      </div>
+
+                      {/* Valid Until */}
+                      {!newMembership.no_expiration && (
                         <div>
-                          <label className="block mb-1">Price (₱)</label>
-                          <input
-                            type="number"
-                            value={newMembership.price}
-                            onChange={(e) =>
-                              setNewMembership({
-                                ...newMembership,
-                                price: e.target.value,
-                              })
-                            }
-                            className="w-full p-2 border rounded"
-                            placeholder="Enter price"
-                          />
-                        </div>
-                        <div>
-                          <label className="block mb-1">
-                            Consumable Amount
+                          <label className="block mb-1 font-medium">
+                            Valid Until
                           </label>
                           <input
-                            type="number"
-                            value={newMembership.consumable_amount}
+                            type="date"
+                            value={newMembership.valid_until || ""}
                             onChange={(e) =>
                               setNewMembership({
                                 ...newMembership,
-                                consumable_amount: e.target.value,
+                                valid_until: e.target.value,
                               })
                             }
                             className="w-full p-2 border rounded"
-                            placeholder="Enter consumable amount"
                           />
                         </div>
-                        {!newMembership.no_expiration && (
-                          <div>
-                            <label className="block mb-1">Valid Until</label>
-                            <input
-                              type="date"
-                              value={newMembership.valid_until}
-                              onChange={(e) =>
-                                setNewMembership({
-                                  ...newMembership,
-                                  valid_until: e.target.value,
-                                })
-                              }
-                              className="w-full p-2 border rounded"
-                            />
-                          </div>
-                        )}
-                      </>
-                    )}
-
-                    {/* Common fields for all membership types */}
-                    <div>
-                      <label className="block mb-1">Description</label>
-                      <textarea
-                        value={newMembership.description}
-                        onChange={(e) =>
-                          setNewMembership({
-                            ...newMembership,
-                            description: e.target.value,
-                          })
-                        }
-                        className="w-full p-2 border rounded"
-                        rows={3}
-                      />
+                      )}
                     </div>
+                  </div>
 
-                    <div className="flex justify-end space-x-2">
-                      <button
-                        onClick={() => setIsModalOpen(false)}
-                        className="px-4 py-2 bg-gray-300 rounded"
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={handleAdd}
-                        className="px-4 py-2 bg-green-600 text-white rounded"
-                      >
-                        Create
-                      </button>
-                    </div>
+                  {/* Description - full width below grid */}
+                  <div className="mt-4">
+                    <label className="block mb-1 font-medium">
+                      Description
+                    </label>
+                    <textarea
+                      value={newMembership.description}
+                      onChange={(e) =>
+                        setNewMembership({
+                          ...newMembership,
+                          description: e.target.value,
+                        })
+                      }
+                      className="w-full p-2 border rounded"
+                      rows={3}
+                      placeholder="Enter short description"
+                    />
+                  </div>
+
+                  {/* Buttons */}
+                  <div className="flex justify-end space-x-2 mt-6">
+                    <button
+                      onClick={() => setIsModalOpen(false)}
+                      className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400 transition"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={handleAdd}
+                      className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition"
+                    >
+                      Create
+                    </button>
                   </div>
                 </div>
               </div>

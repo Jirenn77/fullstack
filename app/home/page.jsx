@@ -618,12 +618,12 @@ export default function Dashboard() {
               {selectedBranch && (
                 <motion.button
                   onClick={handleBackToAllBranches}
-                  className="flex items-center gap-2 px-2 py-2 bg-emerald-500 hover:bg-emerald-600 rounded-lg transition-colors"
+                  className="flex items-center gap-2 px-5 py-2 text-white bg-emerald-500 hover:bg-emerald-600 rounded-lg transition-colors"
                   whileHover={{ scale: 1.05 }}
                   whileTap={{ scale: 0.95 }}
                 >
-                  <ChevronsLeft size={16} />
-                  Back to All Branches
+                  <ChevronsLeft size={18} />
+                  Back
                 </motion.button>
               )}
             </div>

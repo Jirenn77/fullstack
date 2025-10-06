@@ -117,11 +117,11 @@ export default function ServiceGroupsPage() {
             servicesCount: group.services?.length || 0,
             averagePrice: group.services?.length
               ? (
-                group.services.reduce(
-                  (acc, s) => acc + parseFloat(s.price || 0),
-                  0
-                ) / group.services.length
-              ).toFixed(2)
+                  group.services.reduce(
+                    (acc, s) => acc + parseFloat(s.price || 0),
+                    0
+                  ) / group.services.length
+                ).toFixed(2)
               : "0.00",
           }));
           console.log("Fetched service groups:", data);
@@ -172,6 +172,17 @@ export default function ServiceGroupsPage() {
     if (!newGroup.name.trim()) {
       toast.error("Group name is required.");
       return;
+    }
+
+    // 🔍 Check for duplicate group name (case-insensitive)
+    const duplicate = serviceGroups.some(
+      (group) =>
+        group.group_name.toLowerCase() === newGroup.name.trim().toLowerCase()
+    );
+
+    if (duplicate) {
+      toast.error(`Group "${newGroup.name}" already exists.`);
+      return; // Stop execution
     }
 
     try {
@@ -312,7 +323,13 @@ export default function ServiceGroupsPage() {
   useEffect(() => {
     setCurrentGroupPage(1);
     setCurrentServicePage(1);
-  }, [filters.searchQuery, filters.status, filters.sortBy, filters.sortOrder, activeTab]);
+  }, [
+    filters.searchQuery,
+    filters.status,
+    filters.sortBy,
+    filters.sortOrder,
+    activeTab,
+  ]);
 
   const handleEditServices = () => {
     setEditMode(true);
@@ -383,7 +400,9 @@ export default function ServiceGroupsPage() {
       const backendGroup = result.group || {};
       const gid = backendGroup.group_id ?? result.group_id ?? formData.id;
       const services = backendGroup.services ?? formData.services ?? [];
-      const servicesCount = Array.isArray(services) ? services.length : (backendGroup.servicesCount ?? 0);
+      const servicesCount = Array.isArray(services)
+        ? services.length
+        : (backendGroup.servicesCount ?? 0);
 
       // Build an updatedGroup that contains both id and group_id to avoid mismatch
       const updatedGroup = {
@@ -402,7 +421,9 @@ export default function ServiceGroupsPage() {
       setServiceGroups((prev) => {
         const exists = prev.some((g) => (g.group_id ?? g.id) === gid);
         if (exists) {
-          return prev.map((g) => ((g.group_id ?? g.id) === gid ? updatedGroup : g));
+          return prev.map((g) =>
+            (g.group_id ?? g.id) === gid ? updatedGroup : g
+          );
         } else {
           // if it truly doesn't exist, append once
           return [...prev, updatedGroup];
@@ -419,12 +440,34 @@ export default function ServiceGroupsPage() {
   };
 
   const handleAddService = async () => {
-    if (!selectedGroup || !newService.name || !newService.price) return;
+    if (!selectedGroup || !newService.name || !newService.price) {
+      toast.error("Please fill in all required fields.");
+      return;
+    }
+
+    // Find the latest group data from state
+    const currentGroup = serviceGroups.find(
+      (g) =>
+        (g.id || g.group_id) === (selectedGroup.id || selectedGroup.group_id)
+    );
+
+    const groupServices = currentGroup?.services || [];
+
+    // 🔍 Check for duplicate service in the selected group (case-insensitive)
+    const duplicate = groupServices.some(
+      (service) =>
+        service.name.toLowerCase() === newService.name.trim().toLowerCase()
+    );
+
+    if (duplicate) {
+      toast.error(`Service "${newService.name}" already exists in this group.`);
+      return; // Stop execution
+    }
 
     const serviceToAdd = {
-      name: newService.name,
+      name: newService.name.trim(),
       price: parseFloat(newService.price),
-      description: newService.description || null,
+      description: newService.description?.trim() || null,
       duration: parseInt(newService.duration) || null,
       category: selectedGroup.group_name,
     };
@@ -450,25 +493,39 @@ export default function ServiceGroupsPage() {
       const result = await response.json();
 
       if (result.success) {
+        const newServiceWithId = { ...serviceToAdd, id: result.service_id };
+
+        // ✅ Update state immediately
         const updatedGroups = serviceGroups.map((group) =>
           (group.id || group.group_id) ===
-            (selectedGroup.id || selectedGroup.group_id)
+          (selectedGroup.id || selectedGroup.group_id)
             ? {
-              ...group,
-              services: [
-                ...group.services,
-                { ...serviceToAdd, id: result.service_id },
-              ],
-              servicesCount: group.services.length + 1,
-            }
+                ...group,
+                services: [...group.services, newServiceWithId],
+                servicesCount: group.services.length + 1,
+                averagePrice: (
+                  [...group.services, newServiceWithId].reduce(
+                    (acc, s) => acc + parseFloat(s.price || 0),
+                    0
+                  ) / ([...group.services, newServiceWithId].length || 1)
+                ).toFixed(2),
+              }
             : group
         );
 
         setServiceGroups(updatedGroups);
-        setIsAddModalOpen(false); // Close modal
 
-        // ✅ Success toast
-        toast.success("Service added successfully!");
+        // ✅ Also sync `selectedGroup` so modal/table updates immediately
+        setSelectedGroup(
+          updatedGroups.find(
+            (g) =>
+              (g.id || g.group_id) ===
+              (selectedGroup.id || selectedGroup.group_id)
+          )
+        );
+
+        setIsAddModalOpen(false); // Close modal
+        toast.success(`Service "${newService.name}" added successfully!`);
       } else {
         console.error("Error adding service:", result.message);
         toast.error(result.message || "Failed to add service.");
@@ -571,7 +628,9 @@ export default function ServiceGroupsPage() {
       <div className="flex items-center justify-between px-6 py-4 bg-white border-t border-gray-200">
         <div className="flex-1 flex justify-between sm:hidden">
           <button
-            onClick={() => setCurrentServicePage((prev) => Math.max(prev - 1, 1))}
+            onClick={() =>
+              setCurrentServicePage((prev) => Math.max(prev - 1, 1))
+            }
             disabled={currentServicePage === 1}
             className="relative inline-flex items-center px-4 py-2 border border-gray-300 text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50"
           >
@@ -594,12 +653,12 @@ export default function ServiceGroupsPage() {
               </span>{" "}
               to{" "}
               <span className="font-medium">
-                {Math.min(currentServicePage * itemsPerPage, filteredServices.length)}
+                {Math.min(
+                  currentServicePage * itemsPerPage,
+                  filteredServices.length
+                )}
               </span>{" "}
-              of{" "}
-              <span className="font-medium">
-                {filteredServices.length}
-              </span>{" "}
+              of <span className="font-medium">{filteredServices.length}</span>{" "}
               results
             </p>
           </div>
@@ -609,7 +668,9 @@ export default function ServiceGroupsPage() {
               aria-label="Pagination"
             >
               <button
-                onClick={() => setCurrentServicePage((prev) => Math.max(prev - 1, 1))}
+                onClick={() =>
+                  setCurrentServicePage((prev) => Math.max(prev - 1, 1))
+                }
                 disabled={currentServicePage === 1}
                 className="relative inline-flex items-center px-3 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
               >
@@ -622,17 +683,20 @@ export default function ServiceGroupsPage() {
                 <button
                   key={index}
                   onClick={() => setCurrentServicePage(index + 1)}
-                  className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${currentServicePage === index + 1
+                  className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                    currentServicePage === index + 1
                       ? "z-10 bg-blue-50 border-blue-500 text-blue-600"
                       : "bg-white border-gray-300 text-gray-500 hover:bg-gray-50"
-                    }`}
+                  }`}
                 >
                   {index + 1}
                 </button>
               ))}
               <button
                 onClick={() => setCurrentServicePage((prev) => prev + 1)}
-                disabled={currentServicePage * itemsPerPage >= filteredServices.length}
+                disabled={
+                  currentServicePage * itemsPerPage >= filteredServices.length
+                }
                 className="relative inline-flex items-center px-3 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
               >
                 <span className="sr-only">Next</span>
@@ -767,7 +831,10 @@ export default function ServiceGroupsPage() {
               </span>{" "}
               to{" "}
               <span className="font-medium">
-                {Math.min(currentGroupPage * itemsPerPage, filteredServiceGroups.length)}
+                {Math.min(
+                  currentGroupPage * itemsPerPage,
+                  filteredServiceGroups.length
+                )}
               </span>{" "}
               of{" "}
               <span className="font-medium">
@@ -782,7 +849,9 @@ export default function ServiceGroupsPage() {
               aria-label="Pagination"
             >
               <button
-                onClick={() => setCurrentGroupPage((prev) => Math.max(prev - 1, 1))}
+                onClick={() =>
+                  setCurrentGroupPage((prev) => Math.max(prev - 1, 1))
+                }
                 disabled={currentGroupPage === 1}
                 className="relative inline-flex items-center px-3 py-2 rounded-l-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
               >
@@ -795,17 +864,21 @@ export default function ServiceGroupsPage() {
                 <button
                   key={index}
                   onClick={() => setCurrentGroupPage(index + 1)}
-                  className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${currentGroupPage === index + 1
+                  className={`relative inline-flex items-center px-4 py-2 border text-sm font-medium ${
+                    currentGroupPage === index + 1
                       ? "z-10 bg-blue-50 border-blue-500 text-blue-600"
                       : "bg-white border-gray-300 text-gray-500 hover:bg-gray-50"
-                    }`}
+                  }`}
                 >
                   {index + 1}
                 </button>
               ))}
               <button
                 onClick={() => setCurrentGroupPage((prev) => prev + 1)}
-                disabled={currentGroupPage * itemsPerPage >= filteredServiceGroups.length}
+                disabled={
+                  currentGroupPage * itemsPerPage >=
+                  filteredServiceGroups.length
+                }
                 className="relative inline-flex items-center px-3 py-2 rounded-r-md border border-gray-300 bg-white text-sm font-medium text-gray-500 hover:bg-gray-50"
               >
                 <span className="sr-only">Next</span>
@@ -819,7 +892,9 @@ export default function ServiceGroupsPage() {
   );
 
   return (
-    <div className={`flex flex-col h-screen ${darkMode ? "dark bg-[#0a1a14] text-gray-100" : "bg-gray-50 text-gray-800"}`}>
+    <div
+      className={`flex flex-col h-screen ${darkMode ? "dark bg-[#0a1a14] text-gray-100" : "bg-gray-50 text-gray-800"}`}
+    >
       <Toaster position="top-right" richColors />
       {/* Header */}
       <header className="flex items-center justify-between bg-emerald-700 text-white p-4 w-full h-16 pl-64 relative">
@@ -836,9 +911,15 @@ export default function ServiceGroupsPage() {
             />
             <input
               type="text"
-              placeholder={activeTab === "service-groups" ? "Search groups..." : "Search services..."}
+              placeholder={
+                activeTab === "service-groups"
+                  ? "Search groups..."
+                  : "Search services..."
+              }
               value={filters.searchQuery}
-              onChange={(e) => setFilters({ ...filters, searchQuery: e.target.value })}
+              onChange={(e) =>
+                setFilters({ ...filters, searchQuery: e.target.value })
+              }
               className="pl-10 pr-4 py-2 rounded-lg bg-white/90 text-gray-800 w-full focus:outline-none focus:ring-2 focus:ring-emerald-500"
             />
           </div>
@@ -846,7 +927,12 @@ export default function ServiceGroupsPage() {
           {/* Sort By - Styled to match */}
           <div className="flex items-center space-x-2">
             <button
-              onClick={() => setFilters({ ...filters, sortOrder: filters.sortOrder === "asc" ? "desc" : "asc" })}
+              onClick={() =>
+                setFilters({
+                  ...filters,
+                  sortOrder: filters.sortOrder === "asc" ? "desc" : "asc",
+                })
+              }
               className="px-3 py-2 rounded-r-lg bg-white/90 text-gray-800 hover:bg-gray-100 focus:outline-none focus:ring-2 focus:ring-emerald-500"
             >
               {filters.sortOrder === "asc" ? (
@@ -1184,7 +1270,9 @@ export default function ServiceGroupsPage() {
             className="flex justify-between items-center mb-6"
           >
             <h1 className="text-2xl font-bold text-gray-800">
-              {activeTab === "service-groups" ? "All Service Groups" : "All Services"}
+              {activeTab === "service-groups"
+                ? "All Service Groups"
+                : "All Services"}
             </h1>
             <motion.button
               onClick={() => {
@@ -1201,7 +1289,9 @@ export default function ServiceGroupsPage() {
             >
               <Plus size={18} />
               <span>
-                {activeTab === "service-groups" ? "New Service Group" : "New Service"}
+                {activeTab === "service-groups"
+                  ? "New Service Group"
+                  : "New Service"}
               </span>
             </motion.button>
           </motion.div>
@@ -1211,19 +1301,21 @@ export default function ServiceGroupsPage() {
             <nav className="-mb-px flex space-x-8">
               <button
                 onClick={() => handleTabChange("service-groups")}
-                className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === "service-groups"
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === "service-groups"
                     ? "border-emerald-500 text-emerald-600"
                     : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                  }`}
+                }`}
               >
                 Service Groups
               </button>
               <button
                 onClick={() => handleTabChange("all-services")}
-                className={`py-2 px-1 border-b-2 font-medium text-sm ${activeTab === "all-services"
+                className={`py-2 px-1 border-b-2 font-medium text-sm ${
+                  activeTab === "all-services"
                     ? "border-emerald-500 text-emerald-600"
                     : "border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300"
-                  }`}
+                }`}
               >
                 All Services
               </button>
@@ -1238,7 +1330,9 @@ export default function ServiceGroupsPage() {
               animate={{ opacity: 1 }}
               transition={{ delay: 0.1 }}
             >
-              {activeTab === "service-groups" ? renderServiceGroupsTable() : renderServicesTable()}
+              {activeTab === "service-groups"
+                ? renderServiceGroupsTable()
+                : renderServicesTable()}
             </motion.div>
 
             {/* Service Group Detail Panel (only shown for service groups tab) */}
@@ -1285,7 +1379,8 @@ export default function ServiceGroupsPage() {
                           Description
                         </h3>
                         <p className="text-sm text-gray-700 bg-gray-50 p-3 rounded-lg">
-                          {selectedGroup.description || "No description available"}
+                          {selectedGroup.description ||
+                            "No description available"}
                         </p>
                       </div>
 
@@ -1384,7 +1479,9 @@ export default function ServiceGroupsPage() {
                                         className="text-blue-600 hover:text-blue-800 p-1 rounded-md hover:bg-blue-100 transition-colors"
                                         whileHover={{ scale: 1.2 }}
                                         whileTap={{ scale: 0.9 }}
-                                        onClick={() => handleEditService(service)}
+                                        onClick={() =>
+                                          handleEditService(service)
+                                        }
                                       >
                                         <Edit2 size={16} />
                                       </motion.button>
@@ -1413,15 +1510,24 @@ export default function ServiceGroupsPage() {
                           <div className="flex items-center justify-between px-3 py-3 bg-white border-t border-gray-200">
                             <div className="flex-1 flex justify-between">
                               <button
-                                onClick={() => setCurrentServicePage((prev) => Math.max(prev - 1, 1))}
+                                onClick={() =>
+                                  setCurrentServicePage((prev) =>
+                                    Math.max(prev - 1, 1)
+                                  )
+                                }
                                 disabled={currentServicePage === 1}
                                 className="relative inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50"
                               >
                                 Previous
                               </button>
                               <button
-                                onClick={() => setCurrentServicePage((prev) => prev + 1)}
-                                disabled={currentServicePage * servicesPerPage >= selectedGroup.services.length}
+                                onClick={() =>
+                                  setCurrentServicePage((prev) => prev + 1)
+                                }
+                                disabled={
+                                  currentServicePage * servicesPerPage >=
+                                  selectedGroup.services.length
+                                }
                                 className="ml-2 relative inline-flex items-center px-3 py-1.5 border border-gray-300 text-xs font-medium rounded text-gray-700 bg-white hover:bg-gray-50"
                               >
                                 Next
@@ -1454,7 +1560,9 @@ export default function ServiceGroupsPage() {
                   exit={{ scale: 0.9, opacity: 0 }}
                   transition={{ type: "spring", stiffness: 200, damping: 20 }}
                 >
-                  <h2 className="text-xl font-bold mb-5 text-gray-800">Add New Service</h2>
+                  <h2 className="text-xl font-bold mb-5 text-gray-800">
+                    Add New Service
+                  </h2>
                   <div className="space-y-4">
                     <div>
                       <label className="block text-sm font-medium mb-2 text-gray-700">
@@ -1463,7 +1571,9 @@ export default function ServiceGroupsPage() {
                       <motion.input
                         type="text"
                         value={newService.name}
-                        onChange={(e) => setNewService({ ...newService, name: e.target.value })}
+                        onChange={(e) =>
+                          setNewService({ ...newService, name: e.target.value })
+                        }
                         className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                         whileFocus={{ scale: 1.01 }}
                       />
@@ -1476,7 +1586,12 @@ export default function ServiceGroupsPage() {
                         <motion.input
                           type="number"
                           value={newService.price}
-                          onChange={(e) => setNewService({ ...newService, price: e.target.value })}
+                          onChange={(e) =>
+                            setNewService({
+                              ...newService,
+                              price: e.target.value,
+                            })
+                          }
                           className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                           whileFocus={{ scale: 1.01 }}
                         />
@@ -1488,7 +1603,12 @@ export default function ServiceGroupsPage() {
                         <motion.input
                           type="number"
                           value={newService.duration}
-                          onChange={(e) => setNewService({ ...newService, duration: e.target.value })}
+                          onChange={(e) =>
+                            setNewService({
+                              ...newService,
+                              duration: e.target.value,
+                            })
+                          }
                           className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                           whileFocus={{ scale: 1.01 }}
                         />
@@ -1522,7 +1642,9 @@ export default function ServiceGroupsPage() {
           {isEditModalOpen && serviceToEdit && (
             <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
               <div className="bg-white rounded-xl p-6 w-full max-w-md shadow-xl">
-                <h2 className="text-lg font-semibold mb-4 text-gray-800">Edit Service</h2>
+                <h2 className="text-lg font-semibold mb-4 text-gray-800">
+                  Edit Service
+                </h2>
 
                 <div className="mb-4">
                   <label className="block text-sm font-medium text-gray-700 mb-2">
@@ -1531,7 +1653,12 @@ export default function ServiceGroupsPage() {
                   <input
                     type="text"
                     value={serviceToEdit.name}
-                    onChange={(e) => setServiceToEdit({ ...serviceToEdit, name: e.target.value })}
+                    onChange={(e) =>
+                      setServiceToEdit({
+                        ...serviceToEdit,
+                        name: e.target.value,
+                      })
+                    }
                     className="mt-1 block w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
@@ -1543,7 +1670,12 @@ export default function ServiceGroupsPage() {
                   <input
                     type="number"
                     value={serviceToEdit.price}
-                    onChange={(e) => setServiceToEdit({ ...serviceToEdit, price: e.target.value })}
+                    onChange={(e) =>
+                      setServiceToEdit({
+                        ...serviceToEdit,
+                        price: e.target.value,
+                      })
+                    }
                     className="mt-1 block w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
@@ -1555,7 +1687,12 @@ export default function ServiceGroupsPage() {
                   <input
                     type="number"
                     value={serviceToEdit.duration}
-                    onChange={(e) => setServiceToEdit({ ...serviceToEdit, duration: e.target.value })}
+                    onChange={(e) =>
+                      setServiceToEdit({
+                        ...serviceToEdit,
+                        duration: e.target.value,
+                      })
+                    }
                     className="mt-1 block w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                   />
                 </div>
@@ -1633,7 +1770,9 @@ export default function ServiceGroupsPage() {
                         <motion.input
                           type="text"
                           value={newGroup.name}
-                          onChange={(e) => setNewGroup({ ...newGroup, name: e.target.value })}
+                          onChange={(e) =>
+                            setNewGroup({ ...newGroup, name: e.target.value })
+                          }
                           className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                           placeholder="e.g., Hair Services"
                           autoFocus
@@ -1648,7 +1787,12 @@ export default function ServiceGroupsPage() {
                         </label>
                         <motion.textarea
                           value={newGroup.description}
-                          onChange={(e) => setNewGroup({ ...newGroup, description: e.target.value })}
+                          onChange={(e) =>
+                            setNewGroup({
+                              ...newGroup,
+                              description: e.target.value,
+                            })
+                          }
                           rows={3}
                           className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                           placeholder="Brief description of this service group"
@@ -1664,7 +1808,12 @@ export default function ServiceGroupsPage() {
                           </label>
                           <motion.select
                             value={newGroup.status || "Active"}
-                            onChange={(e) => setNewGroup({ ...newGroup, status: e.target.value })}
+                            onChange={(e) =>
+                              setNewGroup({
+                                ...newGroup,
+                                status: e.target.value,
+                              })
+                            }
                             className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             whileFocus={{ scale: 1.01 }}
                           >
@@ -1763,7 +1912,9 @@ export default function ServiceGroupsPage() {
                           <motion.input
                             type="text"
                             value={formData.name}
-                            onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                            onChange={(e) =>
+                              setFormData({ ...formData, name: e.target.value })
+                            }
                             className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             placeholder="Enter group name"
                             autoFocus
@@ -1778,7 +1929,12 @@ export default function ServiceGroupsPage() {
                           </label>
                           <motion.textarea
                             value={formData.description}
-                            onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                description: e.target.value,
+                              })
+                            }
                             rows={5}
                             className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             placeholder="Enter description (optional)"
@@ -1793,7 +1949,12 @@ export default function ServiceGroupsPage() {
                           </label>
                           <motion.select
                             value={formData.status}
-                            onChange={(e) => setFormData({ ...formData, status: e.target.value })}
+                            onChange={(e) =>
+                              setFormData({
+                                ...formData,
+                                status: e.target.value,
+                              })
+                            }
                             className="w-full border border-gray-300 rounded-lg px-4 py-2.5 text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             whileFocus={{ scale: 1.01 }}
                           >
