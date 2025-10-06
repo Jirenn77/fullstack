@@ -41,7 +41,7 @@ try {
             $validTo = $input['validTo'] ?? null;
             $status = $input['status'] ?? 'active';
             $discountType = $input['discountType'] ?? 'percentage';
-            $discountValue = isset($input['value']) ? (float)$input['value'] : 0;
+            $discountValue = isset($input['value']) ? (float) $input['value'] : 0;
 
             $stmt = $pdo->prepare("
                 INSERT INTO promos (type, name, description, valid_from, valid_to, status, discount_type, discount_value)
@@ -66,19 +66,30 @@ try {
             // Insert discount
             $name = $input['name'] ?? '';
             $description = $input['description'] ?? '';
+            $validFrom = $input['validFrom'] ?? null;
+            $validTo = $input['validTo'] ?? null;
             $status = $input['status'] ?? 'active';
             $discountType = $input['discountType'] ?? 'percentage';
-            $value = isset($input['value']) ? (float)$input['value'] : 0;
+            $value = isset($input['value']) ? (float) $input['value'] : 0;
 
             $stmt = $pdo->prepare("
-            INSERT INTO discounts (name, description, status, discount_type, value)
-            VALUES (?, ?, ?, ?, ?)
-        ");
-            $stmt->execute([$name, $description, $status, $discountType, $value]);
+        INSERT INTO discounts (name, description, valid_from, valid_to, status, discount_type, value)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+    ");
+            $stmt->execute([
+                $name,
+                $description,
+                $validFrom ? date('Y-m-d', strtotime($validFrom)) : null,
+                $validTo ? date('Y-m-d', strtotime($validTo)) : null,
+                $status,
+                $discountType,
+                $value
+            ]);
 
             echo json_encode(['success' => true, 'message' => 'Discount added successfully.']);
             exit;
         }
+
     }
 
 
@@ -108,9 +119,9 @@ try {
             // Update the promo
             $discountType = $input['discount_type'] ?? 'fixed';
             if (isset($input['discount_value'])) {
-                $discountValue = (float)$input['discount_value'];
+                $discountValue = (float) $input['discount_value'];
             } elseif (isset($input['discountedPrice'])) {
-                $discountValue = (float)$input['discountedPrice'];
+                $discountValue = (float) $input['discountedPrice'];
             } else {
                 $discountValue = 0;
             }
@@ -181,12 +192,25 @@ try {
         $pdo->beginTransaction();
 
         // Update the discount
+        $validFrom = $input['validFrom'] ?? null;
+        $validTo = $input['validTo'] ?? null;
+
         $stmt = $pdo->prepare("
-        UPDATE discounts
-        SET name = ?, description = ?, status = ?, discount_type = ?, value = ?
-        WHERE discount_id = ?
-    ");
-        $stmt->execute([$name, $description, $status, $discount_type, $value, $discount_id]);
+    UPDATE discounts
+    SET name = ?, description = ?, valid_from = ?, valid_to = ?, status = ?, discount_type = ?, value = ?
+    WHERE discount_id = ?
+");
+        $stmt->execute([
+            $name,
+            $description,
+            $validFrom ? date('Y-m-d', strtotime($validFrom)) : null,
+            $validTo ? date('Y-m-d', strtotime($validTo)) : null,
+            $status,
+            $discount_type,
+            $value,
+            $discount_id
+        ]);
+
 
         // Update service mappings
         $deleteStmt = $pdo->prepare("DELETE FROM service_group_mappings WHERE group_id = ?");
@@ -246,24 +270,27 @@ try {
         }
 
         // Fetch discounts
-        $discountStmt = $pdo->query("SELECT discount_id, name, description, discount_type, value, status FROM discounts");
+        $discountStmt = $pdo->query("SELECT discount_id, name, description, valid_from, valid_to, discount_type, value, status FROM discounts");
         $discounts = $discountStmt->fetchAll(PDO::FETCH_ASSOC);
 
         foreach ($discounts as &$discount) {
             $discount['id'] = $discount['discount_id'];
+            $discount['validFrom'] = !empty($discount['valid_from']) ? date("Y-m-d", strtotime($discount['valid_from'])) : null;
+            $discount['validTo'] = !empty($discount['valid_to']) ? date("Y-m-d", strtotime($discount['valid_to'])) : null;
 
-            // ✅ FETCH ASSOCIATED SERVICES FOR THIS DISCOUNT (if needed)
+            // ✅ Fetch services (if any)
             $servicesStmt = $pdo->prepare("
-            SELECT s.service_id, s.name, s.category, s.price, s.duration
-            FROM services s
-            INNER JOIN service_group_mappings sgm ON s.service_id = sgm.service_id
-            WHERE sgm.group_id = ?
-        ");
+        SELECT s.service_id, s.name, s.category, s.price, s.duration
+        FROM services s
+        INNER JOIN service_group_mappings sgm ON s.service_id = sgm.service_id
+        WHERE sgm.group_id = ?
+    ");
             $servicesStmt->execute([$discount['discount_id']]);
             $discount['services'] = $servicesStmt->fetchAll(PDO::FETCH_ASSOC);
 
-            unset($discount['discount_id']);
+            unset($discount['discount_id'], $discount['valid_from'], $discount['valid_to']);
         }
+
 
         echo json_encode([
             'promos' => $promos,
