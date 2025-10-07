@@ -125,6 +125,7 @@ export default function ServiceOrderPage() {
   const [membershipBalance, setMembershipBalance] = useState(0);
   const [membershipExpiration, setMembershipExpiration] = useState(null);
   const [isMember, setIsMember] = useState(true);
+  const [isNewMember, setIsNewMember] = useState(false);
   const premiumServiceIds = membershipServices.map((s) => s.id);
   const premiumSubtotal = selectedServices
     .filter(
@@ -134,7 +135,8 @@ export default function ServiceOrderPage() {
         !service.isFromBundle
     )
     .reduce((sum, service) => sum + service.price * service.quantity, 0);
-  const membershipReduction = isMember ? premiumSubtotal * 0.5 : 0;
+  // Regular members get 50% off premiumSubtotal. New members: no discount, only balance deduction
+  const membershipDiscountAmount = isMember && !isNewMember ? premiumSubtotal * 0.5 : 0;
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
   const [isNewCustomerModalOpen, setIsNewCustomerModalOpen] = useState(false);
   const [showMembershipSignup, setShowMembershipSignup] = useState(false);
@@ -181,13 +183,31 @@ export default function ServiceOrderPage() {
       if (!res.ok) throw new Error("Failed to fetch customers");
       const data = await res.json();
 
-      const formatted = data.map((cust) => ({
-        id: cust.id,
-        name: cust.name,
-        membershipType: cust.membership_status,
-        isMember: cust.membership_status !== "None",
-        balance: cust.membershipDetails?.remainingBalance || 0,
-      }));
+      const formatted = data.map((cust) => {
+        let newMember = false;
+        try {
+          const stored = localStorage.getItem(`newMember:${cust.id}`);
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            const createdAt = parsed?.createdAt ? new Date(parsed.createdAt) : null;
+            const now = new Date();
+            if (createdAt && now.getTime() - createdAt.getTime() < 24 * 60 * 60 * 1000) {
+              newMember = true;
+            } else {
+              localStorage.removeItem(`newMember:${cust.id}`);
+            }
+          }
+        } catch (_) {}
+
+        return {
+          id: cust.id,
+          name: cust.name,
+          membershipType: cust.membership_status,
+          isMember: cust.membership_status !== "None",
+          balance: cust.membershipDetails?.remainingBalance || 0,
+          isNewMember: newMember,
+        };
+      });
 
       setCustomers(formatted);
     } catch (err) {
@@ -457,24 +477,26 @@ export default function ServiceOrderPage() {
       return;
     }
 
-    const appliedMembershipReduction =
-      isMember && useMembership ? membershipReduction : 0;
-
-    const newBalance =
-      isMember && useMembership
-        ? membershipBalance - appliedMembershipReduction
-        : membershipBalance;
+    const appliedMembershipReduction = isMember && useMembership && !isNewMember ? membershipDiscountAmount : 0;
 
     const servicesTotal = selectedServices.reduce(
       (sum, service) => sum + service.price * service.quantity,
       0
     );
 
-    const grandTotal =
-      servicesTotal -
-      promoReduction -
-      discountReduction -
-      (useMembership ? appliedMembershipReduction : 0);
+    const payableBeforeMembership = Math.max(
+      servicesTotal - promoReduction - discountReduction,
+      0
+    );
+    const appliedMembershipBalance = isMember && isNewMember && useMembership
+      ? Math.min(membershipBalance || 0, payableBeforeMembership)
+      : 0;
+
+    const newBalance = isMember && useMembership
+      ? (isNewMember ? (membershipBalance - appliedMembershipBalance) : (membershipBalance - appliedMembershipReduction))
+      : membershipBalance;
+
+    const grandTotal = servicesTotal - promoReduction - discountReduction - (useMembership ? (appliedMembershipReduction + appliedMembershipBalance) : 0);
 
     const orderData = {
       order_number: orderNumber,
@@ -489,7 +511,8 @@ export default function ServiceOrderPage() {
       subtotal: servicesTotal,
       discount: discount, // keep full object if needed for reference
       promo: promoApplied || null,
-      membershipReduction: appliedMembershipReduction,
+      membershipDiscount: appliedMembershipReduction,
+      membershipBalanceDeduction: appliedMembershipBalance,
       grand_total: grandTotal,
       employee_name: currentUser?.name || "Unknown",
       is_member: isMember,
@@ -683,6 +706,8 @@ export default function ServiceOrderPage() {
     setMembershipBalance(customer.balance); // ✅ set balance here
     setMembershipExpiration(customer.expirationDate); // ✅ set expiration
     setSelectedCustomer(customer);
+    // Determine if this is a first-time/new member using localStorage flag hydrated in customers list
+    setIsNewMember(!!customer.isNewMember);
     setIsCustomerModalOpen(false);
   };
 
@@ -1181,11 +1206,12 @@ export default function ServiceOrderPage() {
                               </span>
                               <span className="font-medium text-emerald-600">
                                 ₱
-                                {Math.max(
-                                  0,
-                                  membershipBalance -
-                                    (useMembership ? membershipReduction : 0)
-                                ).toLocaleString()}
+                                {(() => {
+                                  const total = selectedServices.reduce((sum, service) => sum + service.price * (service.quantity || 1), 0);
+                                  const payable = Math.max(total - (promoReduction || 0) - (discountReduction || 0), 0);
+                                  const deduction = useMembership ? (isNewMember ? Math.min(membershipBalance || 0, payable) : membershipDiscountAmount) : 0;
+                                  return Math.max(0, membershipBalance - deduction).toLocaleString();
+                                })()}
                               </span>
                             </div>
                           </div>
@@ -1613,10 +1639,16 @@ export default function ServiceOrderPage() {
                         </div>
                       )}
 
-                      {isMember && useMembership && membershipReduction > 0 && (
+                      {isMember && useMembership && !isNewMember && membershipDiscountAmount > 0 && (
                         <div className="flex justify-between text-emerald-600">
                           <span>Membership:</span>
-                          <span>-{formatCurrency(membershipReduction)}</span>
+                          <span>-{formatCurrency(membershipDiscountAmount)}</span>
+                        </div>
+                      )}
+                      {isMember && useMembership && isNewMember && (
+                        <div className="flex justify-between text-emerald-600">
+                          <span>Membership:</span>
+                          <span>-{formatCurrency(Math.min(membershipBalance || 0, Math.max(calculatedSubtotal - promoReduction - discountReduction, 0)))}</span>
                         </div>
                       )}
 
@@ -1628,7 +1660,7 @@ export default function ServiceOrderPage() {
                               calculatedSubtotal -
                                 promoReduction -
                                 discountReduction -
-                                (useMembership ? membershipReduction : 0)
+                                (useMembership ? (isNewMember ? Math.min(membershipBalance || 0, Math.max(calculatedSubtotal - promoReduction - discountReduction, 0)) : membershipDiscountAmount) : 0)
                             )}
                           </span>
                         </div>
@@ -2348,11 +2380,12 @@ export default function ServiceOrderPage() {
                             </span>
                             <span className="font-medium text-emerald-600">
                               ₱
-                              {Math.max(
-                                0,
-                                membershipBalance -
-                                  (useMembership ? membershipReduction : 0)
-                              ).toLocaleString()}
+                              {(() => {
+                                const total = selectedServices.reduce((sum, service) => sum + service.price * (service.quantity || 1), 0);
+                                const payable = Math.max(total - (promoReduction || 0) - (discountReduction || 0), 0);
+                                const deduction = useMembership ? (isNewMember ? Math.min(membershipBalance || 0, payable) : membershipDiscountAmount) : 0;
+                                return Math.max(0, membershipBalance - deduction).toLocaleString();
+                              })()}
                             </span>
                           </div>
                         </>
@@ -2412,10 +2445,16 @@ export default function ServiceOrderPage() {
                       )}
 
                       {/* Membership */}
-                      {isMember && useMembership && membershipReduction > 0 && (
+                      {isMember && useMembership && !isNewMember && membershipDiscountAmount > 0 && (
                         <div className="flex justify-between text-emerald-600">
                           <span>Membership:</span>
-                          <span>-{formatCurrency(membershipReduction)}</span>
+                          <span>-{formatCurrency(membershipDiscountAmount)}</span>
+                        </div>
+                      )}
+                      {isMember && useMembership && isNewMember && (
+                        <div className="flex justify-between text-emerald-600">
+                          <span>Membership Balance Used:</span>
+                          <span>-{formatCurrency(Math.min(membershipBalance || 0, Math.max(selectedServices.reduce((s, sv) => s + sv.price * (sv.quantity || 1), 0) - (promoReduction || 0) - (discountReduction || 0), 0)))}</span>
                         </div>
                       )}
 
@@ -2432,7 +2471,7 @@ export default function ServiceOrderPage() {
                               ) -
                                 promoReduction -
                                 discountReduction -
-                                (useMembership ? membershipReduction : 0)
+                                (useMembership ? (isNewMember ? Math.min(membershipBalance || 0, Math.max(selectedServices.reduce((s, sv) => s + sv.price * (sv.quantity || 1), 0) - (promoReduction || 0) - (discountReduction || 0), 0)) : membershipDiscountAmount) : 0)
                             )}
                           </span>
                         </div>
@@ -2587,13 +2626,12 @@ export default function ServiceOrderPage() {
                             </span>
                             <span className="text-emerald-600 font-medium">
                               ₱
-                              {Math.max(
-                                0,
-                                membershipBalance -
-                                  (useMembership ? membershipReduction : 0)
-                              ).toLocaleString(undefined, {
-                                minimumFractionDigits: 2,
-                              })}
+                              {(() => {
+                                const total = savedOrderData.services.reduce((sum, s) => sum + s.price * s.quantity, 0);
+                                const payable = Math.max(total - (promoReduction || 0) - (discountReduction || 0), 0);
+                                const deduction = useMembership ? (isNewMember ? Math.min(membershipBalance || 0, payable) : membershipDiscountAmount) : 0;
+                                return Math.max(0, membershipBalance - deduction).toLocaleString(undefined, { minimumFractionDigits: 2 });
+                              })()}
                             </span>
                           </div>
                         </>
@@ -2693,12 +2731,16 @@ export default function ServiceOrderPage() {
                       )}
 
                       {/* Membership */}
-                      {isMember && useMembership && membershipReduction > 0 && (
+                      {isMember && useMembership && !isNewMember && membershipDiscountAmount > 0 && (
                         <div className="flex justify-between text-emerald-600">
                           <span>Membership:</span>
-                          <span className="tabular-nums">
-                            -{formatCurrency(membershipReduction)}
-                          </span>
+                          <span className="tabular-nums">-{formatCurrency(membershipDiscountAmount)}</span>
+                        </div>
+                      )}
+                      {isMember && useMembership && isNewMember && (
+                        <div className="flex justify-between text-emerald-600">
+                          <span>Membership Balance Used:</span>
+                          <span className="tabular-nums">-{formatCurrency(Math.min(membershipBalance || 0, Math.max(savedOrderData.services.reduce((sum, s) => sum + s.price * s.quantity, 0) - (promoReduction || 0) - (discountReduction || 0), 0)))}</span>
                         </div>
                       )}
 
@@ -2714,7 +2756,7 @@ export default function ServiceOrderPage() {
                               ) -
                                 (promoReduction || 0) -
                                 (discountReduction || 0) -
-                                (useMembership ? membershipReduction : 0)
+                                (useMembership ? (isNewMember ? Math.min(membershipBalance || 0, Math.max(savedOrderData.services.reduce((sum, s) => sum + s.price * s.quantity, 0) - (promoReduction || 0) - (discountReduction || 0), 0)) : membershipDiscountAmount) : 0)
                             )}
                           </span>
                         </div>
@@ -2745,15 +2787,21 @@ export default function ServiceOrderPage() {
                         </label>
                         <div className="p-3 rounded-lg bg-gray-100 text-emerald-700 font-semibold shadow-inner">
                           {formatCurrency(
-                            selectedServices.reduce(
-                              (sum, service) =>
-                                sum + service.price * service.quantity,
-                              0
-                            ) -
+                            selectedServices.reduce((sum, service) => sum + service.price * service.quantity, 0) -
                               (promoApplied ? promoReduction : 0) -
                               (discount ? discountReduction : 0) -
                               (isMember && useMembership
-                                ? membershipReduction
+                                ? (isNewMember
+                                    ? Math.min(
+                                        membershipBalance || 0,
+                                        Math.max(
+                                          selectedServices.reduce((s, sv) => s + sv.price * (sv.quantity || 1), 0) -
+                                            (promoReduction || 0) -
+                                            (discountReduction || 0),
+                                          0
+                                        )
+                                      )
+                                    : membershipDiscountAmount)
                                 : 0)
                           )}
                         </div>
