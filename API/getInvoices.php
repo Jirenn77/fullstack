@@ -50,62 +50,75 @@ try {
     }
 
     // ✅ Handle invoice fetching (GET)
-    if ($_SERVER['REQUEST_METHOD'] === 'GET') {
-        $stmt = $pdo->prepare("
-            SELECT 
-                i.invoice_id,
-                i.invoice_number,
-                i.invoice_date,
-                i.total_price,
-                i.status AS payment_status,
-                c.name AS customer_name,
-                s.name AS service_name
-            FROM invoices i
-            JOIN customers c ON i.customer_id = c.id
-            JOIN services s ON i.service_id = s.service_id
-            ORDER BY i.invoice_date DESC, i.invoice_id DESC
-        ");
-        $stmt->execute();
+if ($_SERVER['REQUEST_METHOD'] === 'GET') {
+    $branch = $_GET['branch'] ?? null;
 
-        $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+    $query = "
+        SELECT 
+            i.invoice_number,
+            i.invoice_date,
+            i.total_price,
+            i.status AS payment_status,
+            c.name AS customer_name,
+            s.name AS service_name,
+            t.total_amount AS final_total,
+            t.employee_name
+        FROM invoices i
+        JOIN customers c ON i.customer_id = c.id
+        JOIN services s ON i.service_id = s.service_id
+        JOIN transactions t ON i.invoice_number = t.invoice_number
+    ";
 
-        $invoices = [];
-
-        foreach ($result as $row) {
-            $invNumber = $row['invoice_number'];
-
-            // check if invoice exists already
-            $index = array_search($invNumber, array_column($invoices, 'invoiceNumber'));
-
-            if ($index === false) {
-                $invoices[] = [
-                    'invoiceNumber' => $invNumber,
-                    'name' => $row['customer_name'],
-                    'dateIssued' => $row['invoice_date'],
-                    'totalAmount' => 0,
-                    'paymentStatus' => $row['payment_status'],
-                    'handledBy' => "Staff",
-                    'branch' => "Main",
-                    'services' => []
-                ];
-                $index = array_key_last($invoices);
-            }
-
-            $invoices[$index]['services'][] = [
-                'name' => $row['service_name'],
-                'price' => "₱" . number_format($row['total_price'], 2)
-            ];
-
-            $invoices[$index]['totalAmount'] += $row['total_price'];
-        }
-
-        foreach ($invoices as &$invoice) {
-            $invoice['totalAmount'] = "₱" . number_format($invoice['totalAmount'], 2);
-        }
-
-        echo json_encode($invoices);
-        exit;
+    // optional filter by branch (only if your transactions table has one)
+    if ($branch && strtolower($branch) !== 'all') {
+        $query .= " WHERE t.branch = :branch"; // ✅ Adjust column name if needed
     }
+
+    $query .= " ORDER BY i.invoice_date DESC, i.invoice_id DESC";
+
+    $stmt = $pdo->prepare($query);
+
+    if ($branch && strtolower($branch) !== 'all') {
+        $stmt->bindParam(':branch', $branch);
+    }
+
+    $stmt->execute();
+    $result = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+    $invoices = [];
+
+    foreach ($result as $row) {
+        $invNumber = $row['invoice_number'];
+
+        // check if invoice exists already
+        $index = array_search($invNumber, array_column($invoices, 'invoiceNumber'));
+
+        if ($index === false) {
+            $invoices[] = [
+                'invoiceNumber' => $invNumber,
+                'name' => $row['customer_name'],
+                'dateIssued' => $row['invoice_date'],
+                'totalAmount' => isset($row['final_total'])
+                    ? "₱" . number_format($row['final_total'], 2)
+                    : "₱" . number_format($row['total_price'], 2),
+                'paymentStatus' => $row['payment_status'],
+                'handledBy' => $row['employee_name'] ?? "Staff",
+                'branch' => $branch ?? "Main",
+                'services' => []
+            ];
+            $index = array_key_last($invoices);
+        }
+
+        $invoices[$index]['services'][] = [
+            'name' => $row['service_name'],
+            'price' => "₱" . number_format($row['total_price'], 2)
+        ];
+    }
+
+    echo json_encode($invoices);
+    exit;
+}
+
 
 } catch (PDOException $e) {
     http_response_code(500);

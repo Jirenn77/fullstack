@@ -50,7 +50,10 @@ try {
         // Get reductions from input
         $promoReduction = isset($input['promoReduction']) ? floatval($input['promoReduction']) : 0;
         $discountReduction = isset($input['discountReduction']) ? floatval($input['discountReduction']) : 0;
-        $membershipReduction = isset($input['membershipReduction']) ? floatval($input['membershipReduction']) : 0;
+        $membershipDiscount = isset($input['membershipDiscount']) ? floatval($input['membershipDiscount']) : 0;
+$membershipBalanceDeduction = isset($input['membershipBalanceDeduction']) ? floatval($input['membershipBalanceDeduction']) : 0;
+$membershipReduction = $membershipDiscount + $membershipBalanceDeduction;
+
 
         // Final total matches frontend logic
         $finalAmount = $subtotal - $promoReduction - $discountReduction - $membershipReduction;
@@ -125,12 +128,20 @@ try {
 
             // Update membership balance if applicable
             if (!is_null($updateMembershipBalance)) {
-                $updateStmt = $pdo->prepare("UPDATE memberships SET remaining_balance = :balance WHERE customer_id = :customer_id");
-                $updateStmt->execute([
-                    ':balance' => $updateMembershipBalance,
-                    ':customer_id' => $customerId
-                ]);
-            }
+    // ✅ Ensure balance cannot go below zero
+    $safeBalance = max(0, $updateMembershipBalance);
+
+    $updateStmt = $pdo->prepare("
+        UPDATE memberships 
+        SET remaining_balance = :balance 
+        WHERE customer_id = :customer_id
+    ");
+    $updateStmt->execute([
+        ':balance' => $safeBalance,
+        ':customer_id' => $customerId
+    ]);
+}
+
 
             $pdo->commit();
 
