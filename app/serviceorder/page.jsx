@@ -126,17 +126,9 @@ export default function ServiceOrderPage() {
   const [membershipExpiration, setMembershipExpiration] = useState(null);
   const [isMember, setIsMember] = useState(true);
   const [isNewMember, setIsNewMember] = useState(false);
-  const premiumServiceIds = membershipServices.map((s) => s.id);
-  const premiumSubtotal = selectedServices
-    .filter(
-      (service) =>
-        premiumServiceIds.includes(service.id) &&
-        !service.isFromPromo &&
-        !service.isFromBundle
-    )
-    .reduce((sum, service) => sum + service.price * service.quantity, 0);
   // Regular members get 50% off premiumSubtotal. New members: no discount, only balance deduction
-  const membershipDiscountAmount = isMember && !isNewMember ? premiumSubtotal * 0.5 : 0;
+  // ✅ Apply 50% discount to ALL members (including new members), regardless of balance
+  // const membershipDiscountAmount = isMember && useMembership ? premiumSubtotal * 0.5 : 0;
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
   const [isNewCustomerModalOpen, setIsNewCustomerModalOpen] = useState(false);
   const [showMembershipSignup, setShowMembershipSignup] = useState(false);
@@ -189,9 +181,14 @@ export default function ServiceOrderPage() {
           const stored = localStorage.getItem(`newMember:${cust.id}`);
           if (stored) {
             const parsed = JSON.parse(stored);
-            const createdAt = parsed?.createdAt ? new Date(parsed.createdAt) : null;
+            const createdAt = parsed?.createdAt
+              ? new Date(parsed.createdAt)
+              : null;
             const now = new Date();
-            if (createdAt && now.getTime() - createdAt.getTime() < 24 * 60 * 60 * 1000) {
+            if (
+              createdAt &&
+              now.getTime() - createdAt.getTime() < 24 * 60 * 60 * 1000
+            ) {
               newMember = true;
             } else {
               localStorage.removeItem(`newMember:${cust.id}`);
@@ -471,32 +468,88 @@ export default function ServiceOrderPage() {
     0
   );
 
+  const premiumServiceIds = membershipServices.map((s) => s.id);
+  const premiumSubtotal = selectedServices
+    .filter(
+      (service) =>
+        premiumServiceIds.includes(service.id) &&
+        !service.isFromPromo &&
+        !service.isFromBundle
+    )
+    .reduce((sum, service) => sum + service.price * service.quantity, 0);
+
+  // Calculate membership eligibility
+  const canUseDiscountServices =
+    isMember &&
+    useMembership &&
+    // Regular members can always use discounts
+    (!isNewMember ||
+      // New members can use discounts ONLY when balance is 0 or less
+      (isNewMember && membershipBalance <= 0));
+
+  // Apply 50% discount only if eligible
+  const membershipDiscountAmount = canUseDiscountServices
+    ? premiumSubtotal * 0.5
+    : 0;
+
+  // For new members with balance, only deduct from balance (no discount)
+  const membershipBalanceDeduction =
+    isMember && useMembership && isNewMember && membershipBalance > 0
+      ? (() => {
+          // Calculate subtotal for services that ARE eligible for balance deduction
+          const eligibleForBalanceDeduction = selectedServices
+            .filter((service) => !service.isFromPromo && !service.isFromBundle)
+            .reduce(
+              (sum, service) => sum + service.price * service.quantity,
+              0
+            );
+
+          // Only apply balance deduction to eligible services (minus promos/discounts proportionally)
+          const eligibleAmount = Math.max(
+            eligibleForBalanceDeduction - promoReduction - discountReduction,
+            0
+          );
+
+          return Math.min(membershipBalance, eligibleAmount);
+        })()
+      : 0;
+
+  const updateQuantity = (serviceId, newQuantity) => {
+    setSelectedServices((prev) =>
+      prev.map((service) =>
+        service.id === serviceId
+          ? { ...service, quantity: Math.max(1, newQuantity) } // prevent 0 or negative
+          : service
+      )
+    );
+  };
+
   const confirmSave = async () => {
     if (!selectedCustomer || selectedServices.length === 0) {
       toast.warning("Please select a customer and at least one service.");
       return;
     }
 
-    const appliedMembershipReduction = isMember && useMembership && !isNewMember ? membershipDiscountAmount : 0;
+    // Use the already calculated membership amounts
+    const appliedMembershipDiscount = membershipDiscountAmount;
+    const appliedMembershipBalance = membershipBalanceDeduction;
 
     const servicesTotal = selectedServices.reduce(
       (sum, service) => sum + service.price * service.quantity,
       0
     );
 
-    const payableBeforeMembership = Math.max(
-      servicesTotal - promoReduction - discountReduction,
-      0
-    );
-    const appliedMembershipBalance = isMember && isNewMember && useMembership
-      ? Math.min(membershipBalance || 0, payableBeforeMembership)
-      : 0;
+    const newBalance =
+      isMember && useMembership
+        ? Math.max(0, membershipBalance - appliedMembershipBalance)
+        : membershipBalance;
 
-    const newBalance = isMember && useMembership
-      ? (isNewMember ? (membershipBalance - appliedMembershipBalance) : (membershipBalance - appliedMembershipReduction))
-      : membershipBalance;
-
-    const grandTotal = servicesTotal - promoReduction - discountReduction - (useMembership ? (appliedMembershipReduction + appliedMembershipBalance) : 0);
+    const grandTotal =
+      servicesTotal -
+      promoReduction -
+      discountReduction -
+      appliedMembershipDiscount -
+      appliedMembershipBalance;
 
     const orderData = {
       order_number: orderNumber,
@@ -511,7 +564,7 @@ export default function ServiceOrderPage() {
       subtotal: servicesTotal,
       discount: discount, // keep full object if needed for reference
       promo: promoApplied || null,
-      membershipDiscount: appliedMembershipReduction,
+      membershipDiscount: appliedMembershipDiscount,
       membershipBalanceDeduction: appliedMembershipBalance,
       grand_total: grandTotal,
       employee_name: currentUser?.name || "Unknown",
@@ -525,7 +578,14 @@ export default function ServiceOrderPage() {
       const response = await fetch("http://localhost/API/saveAcquire.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(orderData),
+        body: JSON.stringify({
+          ...orderData,
+          promoReduction,
+          discountReduction,
+          // Remove membershipReduction and send the individual components instead
+          membershipDiscount: appliedMembershipDiscount,
+          membershipBalanceDeduction: appliedMembershipBalance,
+        }),
       });
 
       const text = await response.text();
@@ -537,6 +597,16 @@ export default function ServiceOrderPage() {
           toast.success("Service acquired successfully!");
           setSavedOrderData(orderData);
           setCurrentStep(4);
+
+          // If a new member's balance is now zero (or below), flip eligibility to allow discounts next time
+          if (isNewMember && newBalance <= 0) {
+            try {
+              if (selectedCustomer?.id) {
+                localStorage.removeItem(`newMember:${selectedCustomer.id}`);
+              }
+            } catch (_) {}
+            setIsNewMember(false);
+          }
         } else {
           toast.error(result.error || "Save failed");
         }
@@ -587,6 +657,8 @@ export default function ServiceOrderPage() {
       .toString()
       .padStart(3, "0");
     setOrderNumber(`INV-${year}${month}${day}-${randomNum}`);
+
+    router.refresh();
   };
 
   const handleClearAll = () => {
@@ -1163,6 +1235,7 @@ export default function ServiceOrderPage() {
                               {customerName}
                             </h3>
                             <div className="flex items-center mt-1">
+                              {/* Member / Regular Customer badge */}
                               <span
                                 className={`text-xs px-2 py-1 rounded-full ${
                                   isMember
@@ -1172,9 +1245,18 @@ export default function ServiceOrderPage() {
                               >
                                 {isMember ? "Member" : "Regular Customer"}
                               </span>
+
+                              {/* Expiration date (if applicable) */}
                               {isMember && membershipExpiration && (
                                 <span className="text-xs text-gray-500 ml-2">
                                   Expires: {formatDate(membershipExpiration)}
+                                </span>
+                              )}
+
+                              {/* 🆕 New Member badge */}
+                              {isNewMember && (
+                                <span className="text-xs ml-2 bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full font-medium animate-pulse">
+                                  New Member
                                 </span>
                               )}
                             </div>
@@ -1207,10 +1289,30 @@ export default function ServiceOrderPage() {
                               <span className="font-medium text-emerald-600">
                                 ₱
                                 {(() => {
-                                  const total = selectedServices.reduce((sum, service) => sum + service.price * (service.quantity || 1), 0);
-                                  const payable = Math.max(total - (promoReduction || 0) - (discountReduction || 0), 0);
-                                  const deduction = useMembership ? (isNewMember ? Math.min(membershipBalance || 0, payable) : membershipDiscountAmount) : 0;
-                                  return Math.max(0, membershipBalance - deduction).toLocaleString();
+                                  const total = selectedServices.reduce(
+                                    (sum, service) =>
+                                      sum +
+                                      service.price * (service.quantity || 1),
+                                    0
+                                  );
+                                  const payable = Math.max(
+                                    total -
+                                      (promoReduction || 0) -
+                                      (discountReduction || 0),
+                                    0
+                                  );
+                                  const deduction = useMembership
+                                    ? isNewMember
+                                      ? Math.min(
+                                          membershipBalance || 0,
+                                          payable
+                                        )
+                                      : membershipDiscountAmount
+                                    : 0;
+                                  return Math.max(
+                                    0,
+                                    membershipBalance - deduction
+                                  ).toLocaleString();
                                 })()}
                               </span>
                             </div>
@@ -1426,9 +1528,26 @@ export default function ServiceOrderPage() {
                             >
                               <div className="flex justify-between items-start">
                                 <h3 className="font-medium">{service.name}</h3>
-                                <span className="font-bold text-emerald-600">
-                                  {formatCurrency(service.price)}
-                                </span>
+                                <div className="text-right">
+                                  {isMember &&
+                                  membershipServices.some(
+                                    (p) => p.id === service.id
+                                  ) &&
+                                  useMembership ? (
+                                    <>
+                                      <span className="font-bold text-emerald-600">
+                                        {formatCurrency(service.price * 0.5)}
+                                      </span>
+                                      <div className="text-xs text-gray-500 line-through">
+                                        {formatCurrency(service.price)}
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <span className="font-bold text-emerald-600">
+                                      {formatCurrency(service.price)}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
 
                               <p className="text-sm text-gray-500 mt-1">
@@ -1440,7 +1559,22 @@ export default function ServiceOrderPage() {
                                   (p) => p.id === service.id
                                 ) && (
                                   <span className="inline-block mt-2 px-2 py-0.5 text-xs bg-emerald-100 text-emerald-800 rounded-full">
-                                    Membership Discount
+                                    {canUseDiscountServices
+                                      ? "50% Member Discount Applied"
+                                      : membershipBalance > 0
+                                        ? "Can use membership balance"
+                                        : "Member Discount Available"}
+                                  </span>
+                                )}
+
+                              {/* Add badges for promo/bundle services that CANNOT use balance */}
+                              {(service.isFromPromo || service.isFromBundle) &&
+                                isNewMember &&
+                                membershipBalance > 0 && (
+                                  <span className="inline-block mt-1 px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded-full ml-1">
+                                    {service.isFromPromo
+                                      ? "Promo - No balance used"
+                                      : "Bundle - No balance used"}
                                   </span>
                                 )}
                             </motion.div>
@@ -1639,18 +1773,36 @@ export default function ServiceOrderPage() {
                         </div>
                       )}
 
-                      {isMember && useMembership && !isNewMember && membershipDiscountAmount > 0 && (
+                      {/* Membership Discount (50% off premium services) */}
+                      {membershipDiscountAmount > 0 && (
                         <div className="flex justify-between text-emerald-600">
-                          <span>Membership:</span>
-                          <span>-{formatCurrency(membershipDiscountAmount)}</span>
+                          <span>Membership Discount (50%):</span>
+                          <span>
+                            -{formatCurrency(membershipDiscountAmount)}
+                          </span>
                         </div>
                       )}
-                      {isMember && useMembership && isNewMember && (
-                        <div className="flex justify-between text-emerald-600">
-                          <span>Membership:</span>
-                          <span>-{formatCurrency(Math.min(membershipBalance || 0, Math.max(calculatedSubtotal - promoReduction - discountReduction, 0)))}</span>
+
+                      {/* Membership Balance Deduction (for new members with balance) */}
+                      {membershipBalanceDeduction > 0 && (
+                        <div className="flex justify-between text-purple-600">
+                          <span>Membership Balance Used:</span>
+                          <span>
+                            -{formatCurrency(membershipBalanceDeduction)}
+                          </span>
                         </div>
                       )}
+
+                      {/* Show note about excluded services */}
+                      {membershipBalanceDeduction > 0 &&
+                        selectedServices.some(
+                          (s) => s.isFromPromo || s.isFromBundle
+                        ) && (
+                          <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
+                            💡 Membership balance not used for promo/bundle
+                            services
+                          </div>
+                        )}
 
                       <div className="border-t pt-3 mt-3">
                         <div className="flex justify-between font-bold text-lg">
@@ -1660,7 +1812,8 @@ export default function ServiceOrderPage() {
                               calculatedSubtotal -
                                 promoReduction -
                                 discountReduction -
-                                (useMembership ? (isNewMember ? Math.min(membershipBalance || 0, Math.max(calculatedSubtotal - promoReduction - discountReduction, 0)) : membershipDiscountAmount) : 0)
+                                membershipDiscountAmount -
+                                membershipBalanceDeduction
                             )}
                           </span>
                         </div>
@@ -2374,18 +2527,16 @@ export default function ServiceOrderPage() {
                               {membershipType}
                             </span>
                           </div>
-                          <div className="flex justify-between">
+                          <div className="flex justify-between text-sm">
                             <span className="text-gray-600">
                               Remaining Balance:
                             </span>
                             <span className="font-medium text-emerald-600">
                               ₱
-                              {(() => {
-                                const total = selectedServices.reduce((sum, service) => sum + service.price * (service.quantity || 1), 0);
-                                const payable = Math.max(total - (promoReduction || 0) - (discountReduction || 0), 0);
-                                const deduction = useMembership ? (isNewMember ? Math.min(membershipBalance || 0, payable) : membershipDiscountAmount) : 0;
-                                return Math.max(0, membershipBalance - deduction).toLocaleString();
-                              })()}
+                              {Math.max(
+                                0,
+                                membershipBalance - membershipBalanceDeduction
+                              ).toLocaleString()}
                             </span>
                           </div>
                         </>
@@ -2404,13 +2555,7 @@ export default function ServiceOrderPage() {
                       <div className="flex justify-between">
                         <span className="text-gray-600">Subtotal:</span>
                         <span className="font-medium">
-                          {formatCurrency(
-                            selectedServices.reduce(
-                              (sum, service) =>
-                                sum + service.price * service.quantity,
-                              0
-                            )
-                          )}
+                          {formatCurrency(calculatedSubtotal)}
                         </span>
                       </div>
 
@@ -2445,33 +2590,52 @@ export default function ServiceOrderPage() {
                       )}
 
                       {/* Membership */}
-                      {isMember && useMembership && !isNewMember && membershipDiscountAmount > 0 && (
-                        <div className="flex justify-between text-emerald-600">
-                          <span>Membership:</span>
-                          <span>-{formatCurrency(membershipDiscountAmount)}</span>
-                        </div>
-                      )}
+                      {isMember &&
+                        useMembership &&
+                        !isNewMember &&
+                        membershipDiscountAmount > 0 && (
+                          <div className="flex justify-between text-emerald-600">
+                            <span>Membership:</span>
+                            <span>
+                              -{formatCurrency(membershipDiscountAmount)}
+                            </span>
+                          </div>
+                        )}
                       {isMember && useMembership && isNewMember && (
                         <div className="flex justify-between text-emerald-600">
                           <span>Membership Balance Used:</span>
-                          <span>-{formatCurrency(Math.min(membershipBalance || 0, Math.max(selectedServices.reduce((s, sv) => s + sv.price * (sv.quantity || 1), 0) - (promoReduction || 0) - (discountReduction || 0), 0)))}</span>
+                          <span>
+                            -
+                            {formatCurrency(
+                              Math.min(
+                                membershipBalance || 0,
+                                Math.max(
+                                  selectedServices.reduce(
+                                    (s, sv) =>
+                                      s + sv.price * (sv.quantity || 1),
+                                    0
+                                  ) -
+                                    (promoReduction || 0) -
+                                    (discountReduction || 0),
+                                  0
+                                )
+                              )
+                            )}
+                          </span>
                         </div>
                       )}
 
                       {/* Total */}
                       <div className="border-t pt-3 mt-3">
                         <div className="flex justify-between font-bold text-lg">
-                          <span>Total Amount:</span>
+                          <span>Total:</span>
                           <span>
                             {formatCurrency(
-                              selectedServices.reduce(
-                                (sum, service) =>
-                                  sum + service.price * service.quantity,
-                                0
-                              ) -
+                              calculatedSubtotal -
                                 promoReduction -
                                 discountReduction -
-                                (useMembership ? (isNewMember ? Math.min(membershipBalance || 0, Math.max(selectedServices.reduce((s, sv) => s + sv.price * (sv.quantity || 1), 0) - (promoReduction || 0) - (discountReduction || 0), 0)) : membershipDiscountAmount) : 0)
+                                membershipDiscountAmount -
+                                membershipBalanceDeduction
                             )}
                           </span>
                         </div>
@@ -2626,12 +2790,11 @@ export default function ServiceOrderPage() {
                             </span>
                             <span className="text-emerald-600 font-medium">
                               ₱
-                              {(() => {
-                                const total = savedOrderData.services.reduce((sum, s) => sum + s.price * s.quantity, 0);
-                                const payable = Math.max(total - (promoReduction || 0) - (discountReduction || 0), 0);
-                                const deduction = useMembership ? (isNewMember ? Math.min(membershipBalance || 0, payable) : membershipDiscountAmount) : 0;
-                                return Math.max(0, membershipBalance - deduction).toLocaleString(undefined, { minimumFractionDigits: 2 });
-                              })()}
+                              {(
+                                savedOrderData.new_membership_balance ?? 0
+                              ).toLocaleString(undefined, {
+                                minimumFractionDigits: 2,
+                              })}
                             </span>
                           </div>
                         </>
@@ -2643,44 +2806,48 @@ export default function ServiceOrderPage() {
                       <h4 className="font-semibold mb-3 text-gray-700">
                         Services
                       </h4>
-                      <table className="w-full">
-                        <thead>
-                          <tr className="border-b">
-                            <th className="text-left pb-2 text-sm font-medium text-gray-500">
-                              Service
-                            </th>
-                            <th className="text-center pb-2 text-sm font-medium text-gray-500">
-                              Qty
-                            </th>
-                            <th className="text-right pb-2 text-sm font-medium text-gray-500 tabular-nums">
-                              Amount
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {savedOrderData.services.map((service, index) => (
-                            <tr
-                              key={index}
-                              className="border-b last:border-b-0"
-                            >
-                              <td className="py-3 text-sm text-gray-800">
-                                {service.name}
-                              </td>
-                              <td className="py-3 text-center text-sm">
-                                {service.quantity}
-                              </td>
-                              <td className="py-3 text-sm text-right text-gray-800 tabular-nums">
-                                ₱
-                                {(
-                                  service.price * service.quantity
-                                ).toLocaleString(undefined, {
-                                  minimumFractionDigits: 2,
-                                })}
-                              </td>
+
+                      {/* Scrollable container */}
+                      <div className="max-h-64 overflow-y-auto border rounded-lg">
+                        <table className="w-full">
+                          <thead className="bg-gray-50 sticky top-0">
+                            <tr className="border-b">
+                              <th className="text-left pb-2 px-3 text-sm font-medium text-gray-500">
+                                Service
+                              </th>
+                              <th className="text-center pb-2 text-sm font-medium text-gray-500">
+                                Qty
+                              </th>
+                              <th className="text-right pb-2 px-3 text-sm font-medium text-gray-500 tabular-nums">
+                                Amount
+                              </th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {savedOrderData.services.map((service, index) => (
+                              <tr
+                                key={index}
+                                className="border-b last:border-b-0 hover:bg-gray-50"
+                              >
+                                <td className="py-3 px-3 text-sm text-gray-800">
+                                  {service.name}
+                                </td>
+                                <td className="py-3 text-center text-sm">
+                                  {service.quantity}
+                                </td>
+                                <td className="py-3 px-3 text-sm text-right text-gray-800 tabular-nums">
+                                  ₱
+                                  {(
+                                    service.price * service.quantity
+                                  ).toLocaleString(undefined, {
+                                    minimumFractionDigits: 2,
+                                  })}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
 
                     {/* Totals */}
@@ -2690,11 +2857,12 @@ export default function ServiceOrderPage() {
                         <span>Subtotal:</span>
                         <span className="tabular-nums">
                           ₱
-                          {savedOrderData.services
-                            .reduce((sum, s) => sum + s.price * s.quantity, 0)
-                            .toLocaleString(undefined, {
+                          {(savedOrderData.subtotal ?? 0).toLocaleString(
+                            undefined,
+                            {
                               minimumFractionDigits: 2,
-                            })}
+                            }
+                          )}
                         </span>
                       </div>
 
@@ -2731,16 +2899,23 @@ export default function ServiceOrderPage() {
                       )}
 
                       {/* Membership */}
-                      {isMember && useMembership && !isNewMember && membershipDiscountAmount > 0 && (
+                      {(savedOrderData.membershipDiscount ?? 0) > 0 && (
                         <div className="flex justify-between text-emerald-600">
-                          <span>Membership:</span>
-                          <span className="tabular-nums">-{formatCurrency(membershipDiscountAmount)}</span>
+                          <span>Membership Discount (50%):</span>
+                          <span className="tabular-nums">
+                            -{formatCurrency(savedOrderData.membershipDiscount)}
+                          </span>
                         </div>
                       )}
-                      {isMember && useMembership && isNewMember && (
+                      {(savedOrderData.membershipBalanceDeduction ?? 0) > 0 && (
                         <div className="flex justify-between text-emerald-600">
                           <span>Membership Balance Used:</span>
-                          <span className="tabular-nums">-{formatCurrency(Math.min(membershipBalance || 0, Math.max(savedOrderData.services.reduce((sum, s) => sum + s.price * s.quantity, 0) - (promoReduction || 0) - (discountReduction || 0), 0)))}</span>
+                          <span className="tabular-nums">
+                            -
+                            {formatCurrency(
+                              savedOrderData.membershipBalanceDeduction
+                            )}
+                          </span>
                         </div>
                       )}
 
@@ -2749,15 +2924,7 @@ export default function ServiceOrderPage() {
                         <div className="flex justify-between font-bold text-base">
                           <span>TOTAL:</span>
                           <span className="tabular-nums">
-                            {formatCurrency(
-                              savedOrderData.services.reduce(
-                                (sum, s) => sum + s.price * s.quantity,
-                                0
-                              ) -
-                                (promoReduction || 0) -
-                                (discountReduction || 0) -
-                                (useMembership ? (isNewMember ? Math.min(membershipBalance || 0, Math.max(savedOrderData.services.reduce((sum, s) => sum + s.price * s.quantity, 0) - (promoReduction || 0) - (discountReduction || 0), 0)) : membershipDiscountAmount) : 0)
-                            )}
+                            {formatCurrency(savedOrderData.grand_total ?? 0)}
                           </span>
                         </div>
                       </div>
@@ -2786,24 +2953,7 @@ export default function ServiceOrderPage() {
                           Amount Paid
                         </label>
                         <div className="p-3 rounded-lg bg-gray-100 text-emerald-700 font-semibold shadow-inner">
-                          {formatCurrency(
-                            selectedServices.reduce((sum, service) => sum + service.price * service.quantity, 0) -
-                              (promoApplied ? promoReduction : 0) -
-                              (discount ? discountReduction : 0) -
-                              (isMember && useMembership
-                                ? (isNewMember
-                                    ? Math.min(
-                                        membershipBalance || 0,
-                                        Math.max(
-                                          selectedServices.reduce((s, sv) => s + sv.price * (sv.quantity || 1), 0) -
-                                            (promoReduction || 0) -
-                                            (discountReduction || 0),
-                                          0
-                                        )
-                                      )
-                                    : membershipDiscountAmount)
-                                : 0)
-                          )}
+                          {formatCurrency(savedOrderData.grand_total ?? 0)}
                         </div>
                       </div>
 
