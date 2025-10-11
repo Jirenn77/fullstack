@@ -94,9 +94,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $timestamp = date('Y-m-d H:i:s');
 
         // ✅ Normalize action values
-        if ($action === 'create') {
+        if ($action === 'New Member') {
             $action = 'new member';
-        } elseif ($action === 'renew') {
+        } elseif ($action === 'Renewed') {
             $action = 'renewed';
         }
 
