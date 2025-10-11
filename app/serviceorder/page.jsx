@@ -139,6 +139,8 @@ export default function ServiceOrderPage() {
   const [isCustomersLoading, setIsCustomersLoading] = useState(true);
   const [membershipTemplates, setMembershipTemplates] = useState([]);
   const [customersError, setCustomersError] = useState(null);
+  const [promoSearch, setPromoSearch] = useState("");
+  const [bundleSearch, setBundleSearch] = useState("");
   const [newCustomer, setNewCustomer] = useState({
     name: "",
     contact: "",
@@ -847,9 +849,19 @@ export default function ServiceOrderPage() {
     window.location.href = "/home";
   };
 
-  const filteredCategories = serviceCategories.filter((category) =>
-    category.name.toLowerCase().includes(categorySearch.toLowerCase())
+  const filteredCategories = serviceCategories.filter((category) => {
+  const query = searchQuery.toLowerCase();
+
+  // Match category name
+  const matchesCategory = category.name.toLowerCase().includes(query);
+
+  // Match any service name within the category
+  const matchesService = category.services?.some((service) =>
+    service.name.toLowerCase().includes(query)
   );
+
+  return matchesCategory || matchesService;
+});
 
   const handleNewCustomerChange = (e) => {
     const { name, value } = e.target;
@@ -1458,14 +1470,14 @@ export default function ServiceOrderPage() {
                       Service Categories
                     </h2>
                     <div className="mb-4">
-                      <input
-                        type="text"
-                        placeholder="Search categories..."
-                        value={categorySearch}
-                        onChange={(e) => setCategorySearch(e.target.value)}
-                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                      />
-                    </div>
+  <input
+    type="text"
+    placeholder="Search categories or services..."
+    value={searchQuery}
+    onChange={(e) => setSearchQuery(e.target.value)}
+    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+  />
+</div>
                     <div className="space-y-2 max-h-[500px] overflow-y-auto">
                       {filteredCategories.map((category) => (
                         <motion.button
@@ -1588,161 +1600,167 @@ export default function ServiceOrderPage() {
                 {/* Selected Services & Summary */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   {/* Selected Services */}
-                  <div className="lg:col-span-2 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
-                    {/* Header */}
-                    <div className="flex justify-between items-center mb-4">
-                      <h2 className="font-semibold text-gray-900 flex items-center text-lg">
-                        <ShoppingCart className="mr-2" size={20} />
-                        Selected Services
-                        <span className="ml-2 bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm">
-                          {selectedServices.length}
-                        </span>
-                      </h2>
-                      {selectedServices.length > 0 && (
-                        <button
-                          onClick={() => {
-                            setSelectedServices([]);
-                            setSelectedPromoServices({});
-                            setPromoApplied(null);
-                          }}
-                          className="text-sm text-red-600 hover:text-red-800 flex items-center transition-colors"
-                        >
-                          <Trash2 className="mr-1" size={16} />
-                          Clear All
-                        </button>
-                      )}
-                    </div>
+<div className="lg:col-span-2 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+  {/* Header */}
+  <div className="flex justify-between items-center mb-4">
+    <h2 className="font-semibold text-gray-900 flex items-center text-lg">
+      <ShoppingCart className="mr-2" size={20} />
+      Selected Services
+      <span className="ml-2 bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm">
+        {selectedServices.length}
+      </span>
+    </h2>
+    {selectedServices.length > 0 && (
+      <button
+        onClick={() => {
+          setSelectedServices([]);
+          setSelectedPromoServices({});
+          setPromoApplied(null);
+          toast.info("All selected services cleared");
+        }}
+        className="text-sm text-red-600 hover:text-red-800 flex items-center transition-colors"
+      >
+        <Trash2 className="mr-1" size={16} />
+        Clear All
+      </button>
+    )}
+  </div>
 
-                    {/* Scrollable list */}
-                    <div className="max-h-96 overflow-y-auto space-y-3 pr-2">
-                      {selectedServices.length === 0 ? (
-                        <div className="text-center py-8 text-gray-500">
-                          <ShoppingCart
-                            size={48}
-                            className="mx-auto mb-3 text-gray-300"
-                          />
-                          <p>No services selected yet</p>
-                          <p className="text-sm mt-1">
-                            Choose services from the list or browse promos
-                          </p>
-                        </div>
-                      ) : (
-                        selectedServices.map((service, index) => (
-                          <motion.div
-                            key={`${service.id}-${index}`}
-                            className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 p-4 bg-white rounded-lg border border-gray-200 hover:border-blue-200 transition-colors"
-                            initial={{ opacity: 0, y: 10 }}
-                            animate={{ opacity: 1, y: 0 }}
-                            exit={{ opacity: 0, x: 10 }}
-                            transition={{ delay: index * 0.05 }}
-                          >
-                            {/* Remove button */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                removeService(service.id);
+  {/* Scrollable list */}
+  <div className="max-h-96 overflow-y-auto space-y-3 pr-2">
+    {selectedServices.length === 0 ? (
+      <div className="text-center py-8 text-gray-500">
+        <ShoppingCart size={48} className="mx-auto mb-3 text-gray-300" />
+        <p>No services selected yet</p>
+        <p className="text-sm mt-1">
+          Choose services from the list or browse promos
+        </p>
+      </div>
+    ) : (
+      // Ensure deduplication by service ID + bundleId
+      [...new Map(
+        selectedServices.map((s) => [s.id + (s.bundleId || ""), s])
+      ).values()].map((service, index) => (
+        <motion.div
+          key={`${service.id}-${index}`}
+          className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 p-4 bg-white rounded-lg border border-gray-200 hover:border-blue-200 transition-colors"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, x: 10 }}
+          transition={{ delay: index * 0.05 }}
+        >
+          {/* Remove button */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
 
-                                // Also remove from selectedPromoServices if it's from a promo
-                                if (service.isFromPromo && service.promoId) {
-                                  setSelectedPromoServices((prev) => ({
-                                    ...prev,
-                                    [service.promoId]: {
-                                      ...prev[service.promoId],
-                                      [service.id]: false,
-                                    },
-                                  }));
-                                }
-                              }}
-                              className="text-red-500 hover:text-red-700 transition-colors p-1 rounded"
-                            >
-                              <X size={18} />
-                            </button>
+              if (service.isFromBundle && service.bundleId) {
+                // Remove all services from the same bundle
+                setSelectedServices((prev) =>
+                  prev.filter((s) => s.bundleId !== service.bundleId)
+                );
+                toast.info(`"${service.bundleName}" bundle removed from cart`);
+              } else {
+                // Remove single service
+                removeService(service.id);
 
-                            {/* Service info */}
-                            <div className="min-w-0">
-                              <p className="font-medium text-gray-900 truncate">
-                                {service.name}
-                              </p>
-                              <div className="flex items-center space-x-2 mt-1">
-                                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
-                                  {serviceCategories.find((cat) =>
-                                    cat.services.some(
-                                      (s) => s.id === service.id
-                                    )
-                                  )?.name || "General"}
-                                </span>
-                                {service.isFromPromo && (
-                                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
-                                    Promo Discount
-                                  </span>
-                                )}
-                                {service.isFromBundle && (
-                                  <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded">
-                                    Bundle
-                                  </span>
-                                )}
-                              </div>
-                            </div>
+                // Also remove from selectedPromoServices if it's from a promo
+                if (service.isFromPromo && service.promoId) {
+                  setSelectedPromoServices((prev) => ({
+                    ...prev,
+                    [service.promoId]: {
+                      ...prev[service.promoId],
+                      [service.id]: false,
+                    },
+                  }));
+                }
+              }
+            }}
+            className="text-red-500 hover:text-red-700 transition-colors p-1 rounded"
+          >
+            <X size={18} />
+          </button>
 
-                            {/* Quantity controls */}
-                            <div className="flex items-center gap-2 bg-gray-50 rounded-lg p-1">
-                              <button
-                                onClick={() =>
-                                  updateQuantity(
-                                    service.id,
-                                    service.quantity - 1
-                                  )
-                                }
-                                className="w-8 h-8 flex items-center justify-center bg-white border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
-                                disabled={service.quantity === 1}
-                              >
-                                -
-                              </button>
-                              <span className="w-8 text-center font-medium text-gray-900">
-                                {service.quantity}
-                              </span>
-                              <button
-                                onClick={() =>
-                                  updateQuantity(
-                                    service.id,
-                                    service.quantity + 1
-                                  )
-                                }
-                                className="w-8 h-8 flex items-center justify-center bg-white border border-gray-300 rounded hover:bg-gray-100"
-                              >
-                                +
-                              </button>
-                            </div>
+          {/* Service info */}
+          <div className="min-w-0">
+            <p className="font-medium text-gray-900 truncate">
+              {service.name}
+            </p>
+            <div className="flex items-center space-x-2 mt-1">
+              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                {serviceCategories.find((cat) =>
+                  cat.services.some((s) => s.id === service.id)
+                )?.name || "General"}
+              </span>
+              {service.isFromPromo && (
+                <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                  Promo Discount
+                </span>
+              )}
+              {service.isFromBundle && (
+                <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded">
+                  Bundle
+                </span>
+              )}
+            </div>
+          </div>
 
-                            {/* Price */}
-                            <div className="text-right min-w-24">
-                              <div className="font-bold text-gray-900">
-                                ₱
-                                {(
-                                  service.price * service.quantity
-                                ).toLocaleString("en-PH", {
-                                  minimumFractionDigits: 2,
-                                  maximumFractionDigits: 2,
-                                })}
-                              </div>
-                              {service.originalPrice &&
-                                service.originalPrice > service.price && (
-                                  <div className="text-xs text-gray-500 line-through">
-                                    ₱
-                                    {(
-                                      service.originalPrice * service.quantity
-                                    ).toLocaleString("en-PH", {
-                                      minimumFractionDigits: 2,
-                                      maximumFractionDigits: 2,
-                                    })}
-                                  </div>
-                                )}
-                            </div>
-                          </motion.div>
-                        ))
-                      )}
-                    </div>
-                  </div>
+          {/* Quantity controls — hide for bundle services */}
+          {!service.isFromBundle && (
+            <div className="flex items-center gap-2 bg-gray-50 rounded-lg p-1">
+              <button
+                onClick={() =>
+                  updateQuantity(service.id, service.quantity - 1)
+                }
+                className="w-8 h-8 flex items-center justify-center bg-white border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={service.quantity === 1}
+              >
+                -
+              </button>
+              <span className="w-8 text-center font-medium text-gray-900">
+                {service.quantity}
+              </span>
+              <button
+                onClick={() =>
+                  updateQuantity(service.id, service.quantity + 1)
+                }
+                className="w-8 h-8 flex items-center justify-center bg-white border border-gray-300 rounded hover:bg-gray-100"
+              >
+                +
+              </button>
+            </div>
+          )}
+
+          {/* Price */}
+          <div className="text-right min-w-24">
+            <div className="font-bold text-gray-900">
+              ₱
+              {(
+                (service.isFromBundle ? service.price : service.price * service.quantity)
+              ).toLocaleString("en-PH", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })}
+            </div>
+            {service.originalPrice &&
+              service.originalPrice > service.price && (
+                <div className="text-xs text-gray-500 line-through">
+                  ₱
+                  {(
+                    (service.isFromBundle ? service.originalPrice : service.originalPrice * service.quantity)
+                  ).toLocaleString("en-PH", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </div>
+              )}
+          </div>
+        </motion.div>
+      ))
+    )}
+  </div>
+</div>
+
 
                   {/* Order Summary */}
                   <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
@@ -1936,9 +1954,28 @@ export default function ServiceOrderPage() {
                                   </button>
                                 </div>
 
+                                {/* 🔍 Search Bar */}
+<div className="mb-4">
+  <input
+    type="text"
+    placeholder="Search promotions..."
+    value={promoSearch}
+    onChange={(e) => setPromoSearch(e.target.value)}
+    className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700"
+  />
+</div>
+
+
                                 <div className="grid gap-6 max-h-[70vh] overflow-y-auto pr-2">
                                   {promos
-                                    .filter((p) => p.status === "active")
+                                    .filter(
+  (p) =>
+    p.status === "active" &&
+    (!promoSearch ||
+      p.name.toLowerCase().includes(promoSearch.toLowerCase()) ||
+      p.description?.toLowerCase().includes(promoSearch.toLowerCase()))
+)
+
                                     .map((promo) => (
                                       <motion.div
                                         key={promo.id}
@@ -2261,9 +2298,28 @@ export default function ServiceOrderPage() {
                                   </button>
                                 </div>
 
+                                {/* 🔍 Search Bar */}
+<div className="mb-4">
+  <input
+    type="text"
+    placeholder="Search Bundles..."
+    value={bundleSearch}
+    onChange={(e) => setBundleSearch(e.target.value)}
+    className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700"
+  />
+</div>
+
+
                                 <div className="grid gap-6 max-h-[70vh] overflow-y-auto pr-2">
                                   {bundles
-                                    .filter((b) => b.status === "active")
+                                    .filter(
+  (p) =>
+    p.status === "active" &&
+    (!bundleSearch ||
+      p.name.toLowerCase().includes(bundleSearch.toLowerCase()) ||
+      p.description?.toLowerCase().includes(bundleSearch.toLowerCase()))
+)
+
                                     .map((bundle) => (
                                       <motion.div
                                         key={bundle.id}

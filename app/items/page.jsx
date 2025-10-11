@@ -1468,313 +1468,328 @@ export default function BeautyDeals() {
       </div>
 
       {/* Main Details Modal */}
-      <Transition appear show={isOpen} as={Fragment}>
-        <Dialog
-          as="div"
-          className="relative z-10"
-          onClose={() => setIsOpen(false)}
-        >
-          <Transition.Child
-            as={Fragment}
-            enter="ease-out duration-300"
-            enterFrom="opacity-0"
-            enterTo="opacity-100"
-            leave="ease-in duration-200"
-            leaveFrom="opacity-100"
-            leaveTo="opacity-0"
-          >
-            <div className="fixed inset-0 bg-black bg-opacity-25" />
-          </Transition.Child>
+<Transition appear show={isOpen} as={Fragment}>
+  <Dialog
+    as="div"
+    className="relative z-10"
+    onClose={() => setIsOpen(false)}
+  >
+    <Transition.Child
+      as={Fragment}
+      enter="ease-out duration-300"
+      enterFrom="opacity-0"
+      enterTo="opacity-100"
+      leave="ease-in duration-200"
+      leaveFrom="opacity-100"
+      leaveTo="opacity-0"
+    >
+      <div className="fixed inset-0 bg-black bg-opacity-25" />
+    </Transition.Child>
 
-          <div className="fixed inset-0 overflow-y-auto">
-            <div className="flex min-h-full items-center justify-center p-4 text-center">
-              <Transition.Child
-                as={Fragment}
-                enter="ease-out duration-300"
-                enterFrom="opacity-0 scale-95"
-                enterTo="opacity-100 scale-100"
-                leave="ease-in duration-200"
-                leaveFrom="opacity-100 scale-100"
-                leaveTo="opacity-0 scale-95"
+    <div className="fixed inset-0 overflow-y-auto">
+      <div className="flex min-h-full items-center justify-center p-4 text-center">
+        <Transition.Child
+          as={Fragment}
+          enter="ease-out duration-300"
+          enterFrom="opacity-0 scale-95"
+          enterTo="opacity-100 scale-100"
+          leave="ease-in duration-200"
+          leaveFrom="opacity-100 scale-100"
+          leaveTo="opacity-0 scale-95"
+        >
+          <Dialog.Panel className="w-full max-w-3xl transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all">
+            {/* Header */}
+            <div className="flex justify-between items-start">
+              <div>
+                <Dialog.Title
+                  as="h3"
+                  className="text-xl font-bold leading-6 text-gray-900"
+                >
+                  {selectedDeal ? "Promotion Details" : selectedDiscount ? "Discount Details" : "Details"}
+                </Dialog.Title>
+                <p className="text-sm text-gray-500 mt-1">
+                  {selectedDeal ? "Special promotion information" : selectedDiscount ? "Discount group details" : "Complete information"}
+                </p>
+              </div>
+              <button
+                type="button"
+                className="text-gray-400 hover:text-gray-500 transition-colors"
+                onClick={() => setIsOpen(false)}
               >
-                <Dialog.Panel className="w-full max-w-2xl transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all">
-                  {/* Header */}
-                  <div className="flex justify-between items-start">
-                    <Dialog.Title
-                      as="h3"
-                      className="text-lg font-semibold leading-6 text-gray-900"
-                    >
-                      {selectedDeal?.name ||
-                        selectedDiscount?.name ||
-                        "Details"}
-                    </Dialog.Title>
-                    <button
-                      type="button"
-                      className="text-gray-400 hover:text-gray-500"
-                      onClick={() => setIsOpen(false)}
-                    >
-                      <XIcon className="h-6 w-6" />
-                    </button>
+                <XIcon className="h-6 w-6" />
+              </button>
+            </div>
+
+            {/* Content Area */}
+            <div className="mt-6 space-y-6">
+              {/* Basic Info Section */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <div className="space-y-4">
+                  {/* Name & Description */}
+                  <div className={`rounded-lg p-4 ${selectedDeal ? 'bg-blue-50' : 'bg-green-50'}`}>
+                    <h4 className="font-medium text-gray-900 text-sm uppercase tracking-wide">Name</h4>
+                    <p className="text-lg font-semibold mt-1">
+                      <span className={selectedDeal ? 'text-blue-700' : 'text-green-700'}>
+                        {selectedDeal?.name || selectedDiscount?.name || "N/A"}
+                      </span>
+                    </p>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-medium text-gray-900 mb-2">Description</h4>
+                    <p className="text-sm text-gray-700 bg-gray-50 rounded-lg p-3">
+                      {selectedDeal?.description || selectedDiscount?.description || "N/A"}
+                    </p>
                   </div>
 
-                  {/* Content Area */}
-                  <div className="mt-4 space-y-4">
-                    {/* Basic Info Section */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                      <div className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <h4 className="font-medium text-gray-900 text-sm">Status</h4>
+                      <span
+                        className={`mt-1 px-3 py-1.5 rounded-full text-xs font-medium ${
+                          getCurrentStatus() === "active"
+                            ? "bg-green-100 text-green-800"
+                            : "bg-red-100 text-red-800"
+                        }`}
+                      >
+                        {getCurrentStatus() ? getCurrentStatus().charAt(0).toUpperCase() + getCurrentStatus().slice(1) : "N/A"}
+                      </span>
+                    </div>
+                    
+                    <div>
+                      <h4 className="font-medium text-gray-900 text-sm">Type</h4>
+                      <p className="text-sm text-gray-600 mt-1 capitalize">
+                        {selectedDeal ? "Promotion" : selectedDiscount ? "Discount" : "N/A"}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-4">
+                  {/* Discount Value */}
+                  <div className={`rounded-lg p-4 text-white ${selectedDeal ? 'bg-gradient-to-r from-blue-500 to-blue-600' : 'bg-gradient-to-r from-green-500 to-green-600'}`}>
+                    <h4 className="font-medium text-white/90 text-sm">Discount Value</h4>
+                    <p className="text-3xl font-bold mt-1">
+                      {selectedDeal?.discountValue || selectedDiscount?.value || "0"}
+                      {selectedDeal?.discountType === "percentage" || selectedDiscount?.discountType === "percentage" ? "%" : ""} OFF
+                    </p>
+                    <p className="text-sm text-white/80 mt-1 capitalize">
+                      {selectedDeal?.discountType || selectedDiscount?.discountType || "Fixed"} Discount
+                    </p>
+                  </div>
+
+                  {/* Validity Period */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <h4 className="font-medium text-gray-900 text-sm">Valid From</h4>
+                      <p className="text-sm text-gray-800 mt-1 font-medium">
+                        {selectedDeal?.validFrom || selectedDiscount?.validFrom || "No start date"}
+                      </p>
+                    </div>
+                    <div>
+                      <h4 className="font-medium text-gray-900 text-sm">Valid To</h4>
+                      <p className="text-sm text-gray-800 mt-1 font-medium">
+                        {selectedDeal?.validTo || selectedDiscount?.validTo || "No expiration"}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Additional Info */}
+                  {selectedDeal && (
+                    <div className="bg-blue-50 rounded-lg p-3">
+                      <h4 className="font-medium text-blue-900 text-sm">Promotion Type</h4>
+                      <p className="text-sm text-blue-700 mt-1 capitalize">
+                        {selectedDeal.promoType || "Standard"}
+                      </p>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Included Services Section - For Promos */}
+              {selectedDeal && (
+                <div className="pt-4 border-t border-gray-200">
+                  <h4 className="font-semibold text-gray-900 mb-4 flex items-center">
+                    <ClipboardList className="w-5 h-5 mr-2 text-blue-600" />
+                    Included Services ({selectedServices.length})
+                  </h4>
+                  
+                  {selectedServices.length > 0 ? (
+                    <div className="space-y-3 max-h-64 overflow-y-auto pr-2">
+                      {selectedServices.map((service, index) => {
+                        const originalPrice = parseFloat(service.originalPrice) || 0;
+                        const discountValue = parseFloat(selectedDeal.discountValue) || 0;
+                        const discountedPrice = selectedDeal.discountType === "percentage" 
+                          ? originalPrice * (1 - discountValue / 100)
+                          : originalPrice - discountValue;
+
+                        return (
+                          <motion.div
+                            key={service.service_id || index}
+                            initial={{ opacity: 0, y: 10 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ delay: index * 0.1 }}
+                            className="flex justify-between items-center p-3 bg-white border border-gray-200 rounded-lg hover:border-blue-300 transition-colors"
+                          >
+                            <div className="flex-1">
+                              <p className="font-medium text-gray-900">{service.name}</p>
+                              <div className="flex items-center space-x-4 mt-1">
+                                <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                                  {service.category || 'Uncategorized'}
+                                </span>
+                                {service.duration && (
+                                  <span className="text-xs text-blue-600 bg-blue-100 px-2 py-1 rounded">
+                                    {service.duration} mins
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                            <div className="text-right ml-4">
+                              <div className="flex items-center space-x-2">
+                                <span className="text-sm text-gray-500 line-through">
+                                  ₱{originalPrice.toFixed(2)}
+                                </span>
+                                <span className="text-sm font-semibold text-green-600">
+                                  ₱{discountedPrice.toFixed(2)}
+                                </span>
+                              </div>
+                              <p className="text-xs text-red-500 mt-1">
+                                Save ₱{(originalPrice - discountedPrice).toFixed(2)}
+                              </p>
+                            </div>
+                          </motion.div>
+                        );
+                      })}
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 bg-gray-50 rounded-lg">
+                      <ClipboardList className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+                      <p className="text-gray-500">No services included in this promotion</p>
+                    </div>
+                  )}
+
+                  {/* Savings Summary for Promos */}
+                  {selectedServices.length > 0 && (
+                    <div className="bg-gradient-to-r from-blue-50 to-cyan-50 rounded-lg p-4 border border-blue-200 mt-4">
+                      <div className="grid grid-cols-2 gap-4">
                         <div>
-                          <h4 className="font-medium text-gray-900">
-                            Description
-                          </h4>
-                          <p className="text-sm text-gray-700 mt-1">
-                            {selectedDeal?.description ||
-                              selectedDiscount?.description ||
-                              "N/A"}
+                          <h4 className="font-semibold text-blue-900 text-sm">Total Original Value</h4>
+                          <p className="text-lg font-bold text-gray-700">
+                            ₱{selectedServices.reduce((total, service) => total + (parseFloat(service.originalPrice) || 0), 0).toFixed(2)}
                           </p>
                         </div>
-
                         <div>
-                          <h4 className="font-medium text-gray-900">Status</h4>
-                          <span
-                            className={`mt-1 px-2 py-1 rounded-full text-xs ${
-                              getCurrentStatus() === "active"
-                                ? "bg-green-100 text-green-800"
-                                : "bg-red-100 text-red-800"
-                            }`}
-                          >
-                            {getCurrentStatus() || "N/A"}
-                          </span>
+                          <h4 className="font-semibold text-blue-900 text-sm">Total Savings</h4>
+                          <p className="text-lg font-bold text-green-600">
+                            ₱{selectedServices.reduce((total, service) => {
+                              const originalPrice = parseFloat(service.originalPrice) || 0;
+                              const discountValue = parseFloat(selectedDeal.discountValue) || 0;
+                              const discountedPrice = selectedDeal.discountType === "percentage" 
+                                ? originalPrice * (1 - discountValue / 100)
+                                : originalPrice - discountValue;
+                              return total + (originalPrice - discountedPrice);
+                            }, 0).toFixed(2)}
+                          </p>
                         </div>
-                      </div>
-
-                      {/* Conditional Fields */}
-                      <div className="grid grid-cols-2 gap-4">
-                        {selectedDeal ? (
-                          <>
-                            {/* ✅ For Promos */}
-                            <div>
-                              <h4 className="font-medium text-gray-900">
-                                Valid From
-                              </h4>
-                              <p className="text-sm text-gray-800 mt-1">
-                                {selectedDeal.validFrom || "N/A"}
-                              </p>
-                            </div>
-
-                            <div>
-                              <h4 className="font-medium text-gray-900">
-                                Valid To
-                              </h4>
-                              <p className="text-sm text-gray-800 mt-1">
-                                {selectedDeal.validTo || "N/A"}
-                              </p>
-                            </div>
-
-                            <div>
-                              <h4 className="font-medium text-gray-900">
-                                Discount Type
-                              </h4>
-                              <p className="text-sm text-gray-800 mt-1 capitalize">
-                                {selectedDeal.discountType || "N/A"}
-                              </p>
-                            </div>
-
-                            <div>
-                              <h4 className="font-medium text-gray-900">
-                                Discount Value
-                              </h4>
-                              <p className="text-sm text-gray-800 mt-1">
-                                {selectedDeal.discountValue || "N/A"}
-                                {selectedDeal.discountType === "percentage"
-                                  ? "%"
-                                  : ""}
-                              </p>
-                            </div>
-                          </>
-                        ) : (
-                          selectedDiscount && (
-                            <>
-                              {/* ✅ For Discounts */}
-                              <div>
-                                <h4 className="font-medium text-gray-900">
-                                  Valid From
-                                </h4>
-                                <p className="text-sm text-gray-800 mt-1">
-                                  {selectedDiscount.validFrom || "N/A"}
-                                </p>
-                              </div>
-
-                              <div>
-                                <h4 className="font-medium text-gray-900">
-                                  Valid To
-                                </h4>
-                                <p className="text-sm text-gray-800 mt-1">
-                                  {selectedDiscount.validTo || "N/A"}
-                                </p>
-                              </div>
-
-                              <div>
-                                <h4 className="font-medium text-gray-900">
-                                  Discount Type
-                                </h4>
-                                <p className="text-sm text-gray-800 mt-1 capitalize">
-                                  {selectedDiscount.discountType || "N/A"}
-                                </p>
-                              </div>
-
-                              {/* ✅ Aligned with Valid To */}
-                              <div>
-                                <h4 className="font-medium text-gray-900">
-                                  Value
-                                </h4>
-                                <p className="text-sm text-gray-800 mt-1">
-                                  {selectedDiscount.value || "N/A"}
-                                  {selectedDiscount.discountType ===
-                                  "percentage"
-                                    ? "%"
-                                    : ""}
-                                </p>
-                              </div>
-                            </>
-                          )
-                        )}
                       </div>
                     </div>
+                  )}
+                </div>
+              )}
 
-                    {/* Included Services Table - Only show for Promos */}
-                    {selectedDeal && (
-                      <div className="pt-4">
-                        <h4 className="font-semibold text-gray-900 mb-2">
-                          Included Services
-                        </h4>
-                        <div className="overflow-x-auto border border-gray-200 rounded-lg">
-                          {/* ✅ Add vertical scroll with a max height */}
-                          <div className="max-h-64 overflow-y-auto">
-                            <table className="min-w-full divide-y divide-gray-200">
-                              <thead className="bg-gray-50">
-                                <tr>
-                                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-800 uppercase tracking-wider">
-                                    Service
-                                  </th>
-                                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-800 uppercase tracking-wider">
-                                    Category
-                                  </th>
-                                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-800 uppercase tracking-wider">
-                                    Original Price
-                                  </th>
-                                  <th className="px-4 py-2 text-left text-xs font-medium text-gray-800 uppercase tracking-wider">
-                                    Discounted Price
-                                  </th>
-                                </tr>
-                              </thead>
-                              <tbody className="bg-white divide-y divide-gray-200">
-                                {selectedServices.length > 0 ? (
-                                  selectedServices.map((service, index) => (
-                                    <tr key={index}>
-                                      <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-900">
-                                        {service.name}
-                                      </td>
-                                      <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                                        {service.category}
-                                      </td>
-                                      <td className="px-4 py-2 whitespace-nowrap text-sm text-gray-500">
-                                        {service.originalPrice}
-                                      </td>
-                                      <td className="px-4 py-2 whitespace-nowrap text-sm text-red-500">
-                                        {service.originalPrice &&
-                                        selectedDeal.discountValue
-                                          ? selectedDeal.discountType ===
-                                            "percentage"
-                                            ? (
-                                                parseFloat(
-                                                  service.originalPrice
-                                                ) *
-                                                (1 -
-                                                  selectedDeal.discountValue /
-                                                    100)
-                                              ).toFixed(2)
-                                            : (
-                                                parseFloat(
-                                                  service.originalPrice
-                                                ) -
-                                                parseFloat(
-                                                  selectedDeal.discountValue
-                                                )
-                                              ).toFixed(2)
-                                          : "-"}
-                                      </td>
-                                    </tr>
-                                  ))
-                                ) : (
-                                  <tr>
-                                    <td
-                                      colSpan="4"
-                                      className="px-4 py-4 text-center text-sm text-gray-500"
-                                    >
-                                      No services included
-                                    </td>
-                                  </tr>
-                                )}
-                              </tbody>
-                            </table>
+              {/* Service Coverage - For Discounts */}
+              {selectedDiscount && selectedServices.length > 0 && (
+                <div className="pt-4 border-t border-gray-200">
+                  <h4 className="font-semibold text-gray-900 mb-4 flex items-center">
+                    <Tag className="w-5 h-5 mr-2 text-green-600" />
+                    Applicable Services ({selectedServices.length})
+                  </h4>
+                  
+                  <div className="space-y-3 max-h-64 overflow-y-auto pr-2">
+                    {selectedServices.map((service, index) => (
+                      <motion.div
+                        key={service.service_id || index}
+                        initial={{ opacity: 0, y: 10 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: index * 0.1 }}
+                        className="flex justify-between items-center p-3 bg-white border border-gray-200 rounded-lg hover:border-green-300 transition-colors"
+                      >
+                        <div className="flex-1">
+                          <p className="font-medium text-gray-900">{service.name}</p>
+                          <div className="flex items-center space-x-4 mt-1">
+                            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                              {service.category || 'Uncategorized'}
+                            </span>
+                            {service.duration && (
+                              <span className="text-xs text-green-600 bg-green-100 px-2 py-1 rounded">
+                                {service.duration} mins
+                              </span>
+                            )}
                           </div>
                         </div>
-                      </div>
-                    )}
+                        <span className="text-sm font-semibold text-gray-700 ml-4">
+                          ₱{parseFloat(service.originalPrice || service.price || 0).toFixed(2)}
+                        </span>
+                      </motion.div>
+                    ))}
                   </div>
-
-                  {/* Action Buttons */}
-                  <div className="mt-6 flex justify-end space-x-3">
-                    {selectedDeal ? (
-                      <motion.button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          setIsOpen(false);
-                          const dealIndex = deals.findIndex(
-                            (d) => d.id === selectedDeal.id
-                          );
-                          if (dealIndex !== -1) handleEditDeal(dealIndex);
-                        }}
-                        className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm"
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.95 }}
-                      >
-                        Edit Promo
-                      </motion.button>
-                    ) : selectedDiscount ? (
-                      <motion.button
-                        onClick={(e) => {
-                          e.preventDefault();
-                          setIsOpen(false);
-                          const discountIndex = discounts.findIndex(
-                            (d) => d.id === selectedDiscount.id
-                          );
-                          if (discountIndex !== -1)
-                            handleEditDiscount(discountIndex);
-                        }}
-                        className="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded text-sm"
-                        whileHover={{ scale: 1.05 }}
-                        whileTap={{ scale: 0.95 }}
-                      >
-                        Edit Discount
-                      </motion.button>
-                    ) : null}
-
-                    <motion.button
-                      onClick={() => setIsOpen(false)}
-                      className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded text-sm"
-                      whileHover={{ scale: 1.05 }}
-                      whileTap={{ scale: 0.95 }}
-                    >
-                      Close
-                    </motion.button>
-                  </div>
-                </Dialog.Panel>
-              </Transition.Child>
+                </div>
+              )}
             </div>
-          </div>
-        </Dialog>
-      </Transition>
+
+            {/* Action Buttons */}
+            <div className="mt-8 flex justify-end space-x-3 pt-4 border-t border-gray-200">
+              {selectedDeal ? (
+                <motion.button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setIsOpen(false);
+                    const dealIndex = deals.findIndex(
+                      (d) => d.id === selectedDeal.id
+                    );
+                    if (dealIndex !== -1) handleEditDeal(dealIndex);
+                  }}
+                  className="px-5 py-2.5 bg-blue-500 hover:bg-blue-600 text-white rounded-lg text-sm font-medium transition-colors duration-200 flex items-center space-x-2"
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                >
+                  <Pencil className="w-4 h-4" />
+                  <span>Edit Promotion</span>
+                </motion.button>
+              ) : selectedDiscount ? (
+                <motion.button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setIsOpen(false);
+                    const discountIndex = discounts.findIndex(
+                      (d) => d.id === selectedDiscount.id
+                    );
+                    if (discountIndex !== -1) handleEditDiscount(discountIndex);
+                  }}
+                  className="px-5 py-2.5 bg-green-500 hover:bg-green-600 text-white rounded-lg text-sm font-medium transition-colors duration-200 flex items-center space-x-2"
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                >
+                  <Pencil className="w-4 h-4" />
+                  <span>Edit Discount</span>
+                </motion.button>
+              ) : null}
+              
+              <motion.button
+                onClick={() => setIsOpen(false)}
+                className="px-5 py-2.5 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-lg text-sm font-medium transition-colors duration-200"
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
+              >
+                Close
+              </motion.button>
+            </div>
+          </Dialog.Panel>
+        </Transition.Child>
+      </div>
+    </div>
+  </Dialog>
+</Transition>
 
       {/* Bundle Details Modal */}
       <Transition appear show={isOpen && selectedBundle} as={Fragment}>

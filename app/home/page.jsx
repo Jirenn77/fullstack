@@ -197,26 +197,6 @@ export default function Dashboard() {
     }
   };
 
-  const handleSearch = async () => {
-    if (searchQuery.trim()) {
-      const res = await fetch(`http://localhost/API/home.php?q=${searchQuery}`);
-      const data = await res.json();
-      toast(`Searching for: ${searchQuery}`);
-    }
-  };
-
-  const handleAddUser = () => {
-    toast("Add User functionality triggered.");
-  };
-
-  const handleAddService = () => {
-    toast("Add Service functionality triggered.");
-  };
-
-  const handleAddServiceGroup = () => {
-    toast("Add Service Item Group functionality triggered.");
-  };
-
   const handleLogout = () => {
     localStorage.removeItem("authToken");
     window.location.href = "/";

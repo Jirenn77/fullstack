@@ -1,11 +1,11 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Fragment } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
 import { Toaster, toast } from "sonner";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu } from "@headlessui/react";
+import { Menu, Transition, Dialog } from "@headlessui/react";
 import { EllipsisVerticalIcon } from "@heroicons/react/24/solid";
 import {
   Calendar,
@@ -30,7 +30,7 @@ import {
   Leaf,
   BarChart2,
   Plus,
-  ShoppingBag,
+  Info,
   User,
   Star,
   ArrowRight,
@@ -109,6 +109,11 @@ export default function ServiceOrderPage() {
     useState(false);
   const [serviceCategoriesWithMembers, setServiceCategoriesWithMembers] =
     useState(serviceCategories);
+  const [isPromoListOpen, setIsPromoListOpen] = useState(false);
+  const [isBundleListOpen, setIsBundleListOpen] = useState(false);
+  const [bundles, setBundles] = useState([]);
+  const [bundleServiceMap, setBundleServiceMap] = useState({});
+  const [selectedPromoServices, setSelectedPromoServices] = useState({});
 
   const [customerName, setCustomerName] = useState("");
   const [membershipType, setMembershipType] = useState("Standard");
@@ -120,11 +125,10 @@ export default function ServiceOrderPage() {
   const [membershipBalance, setMembershipBalance] = useState(0);
   const [membershipExpiration, setMembershipExpiration] = useState(null);
   const [isMember, setIsMember] = useState(true);
-  const premiumServiceIds = membershipServices.map((s) => s.id);
-  const premiumSubtotal = selectedServices
-    .filter((service) => premiumServiceIds.includes(service.id))
-    .reduce((sum, service) => sum + service.price * service.quantity, 0);
-  const membershipReduction = isMember ? premiumSubtotal * 0.5 : 0;
+  const [isNewMember, setIsNewMember] = useState(false);
+  // Regular members get 50% off premiumSubtotal. New members: no discount, only balance deduction
+  // ✅ Apply 50% discount to ALL members (including new members), regardless of balance
+  // const membershipDiscountAmount = isMember && useMembership ? premiumSubtotal * 0.5 : 0;
   const [isCustomerModalOpen, setIsCustomerModalOpen] = useState(false);
   const [isNewCustomerModalOpen, setIsNewCustomerModalOpen] = useState(false);
   const [showMembershipSignup, setShowMembershipSignup] = useState(false);
@@ -135,6 +139,8 @@ export default function ServiceOrderPage() {
   const [isCustomersLoading, setIsCustomersLoading] = useState(true);
   const [membershipTemplates, setMembershipTemplates] = useState([]);
   const [customersError, setCustomersError] = useState(null);
+  const [promoSearch, setPromoSearch] = useState("");
+  const [bundleSearch, setBundleSearch] = useState("");
   const [newCustomer, setNewCustomer] = useState({
     name: "",
     contact: "",
@@ -171,13 +177,36 @@ export default function ServiceOrderPage() {
       if (!res.ok) throw new Error("Failed to fetch customers");
       const data = await res.json();
 
-      const formatted = data.map((cust) => ({
-        id: cust.id,
-        name: cust.name,
-        membershipType: cust.membership_status,
-        isMember: cust.membership_status !== "None",
-        balance: cust.membershipDetails?.remainingBalance || 0,
-      }));
+      const formatted = data.map((cust) => {
+        let newMember = false;
+        try {
+          const stored = localStorage.getItem(`newMember:${cust.id}`);
+          if (stored) {
+            const parsed = JSON.parse(stored);
+            const createdAt = parsed?.createdAt
+              ? new Date(parsed.createdAt)
+              : null;
+            const now = new Date();
+            if (
+              createdAt &&
+              now.getTime() - createdAt.getTime() < 24 * 60 * 60 * 1000
+            ) {
+              newMember = true;
+            } else {
+              localStorage.removeItem(`newMember:${cust.id}`);
+            }
+          }
+        } catch (_) {}
+
+        return {
+          id: cust.id,
+          name: cust.name,
+          membershipType: cust.membership_status,
+          isMember: cust.membership_status !== "None",
+          balance: cust.membershipDetails?.remainingBalance || 0,
+          isNewMember: newMember,
+        };
+      });
 
       setCustomers(formatted);
     } catch (err) {
@@ -225,15 +254,19 @@ export default function ServiceOrderPage() {
     });
   };
 
-  const removeService = (id) => {
-    setSelectedServices((prev) => prev.filter((s) => s.id !== id));
-  };
-
-  const updateQuantity = (id, newQty) => {
-    if (newQty < 1) return;
+  const removeService = (serviceId) => {
     setSelectedServices((prev) =>
-      prev.map((s) => (s.id === id ? { ...s, quantity: newQty } : s))
+      prev.filter((service) => service.id !== serviceId)
     );
+
+    // Also check if we need to remove the promo application
+    const remainingPromoServices = selectedServices.filter(
+      (service) => service.isFromPromo && service.id !== serviceId
+    );
+
+    if (remainingPromoServices.length === 0 && promoApplied) {
+      setPromoApplied(null);
+    }
   };
 
   useEffect(() => {
@@ -282,6 +315,60 @@ export default function ServiceOrderPage() {
     };
 
     fetchPromosAndDiscounts();
+  }, []);
+
+  useEffect(() => {
+    const fetchBundles = async () => {
+      try {
+        const response = await fetch("http://localhost/API/bundles.php");
+        if (!response.ok) {
+          throw new Error("Network response was not ok");
+        }
+
+        const data = await response.json();
+
+        // ✅ if API wraps bundles inside an object
+        if (Array.isArray(data)) {
+          setBundles(data);
+        } else if (Array.isArray(data.bundles)) {
+          setBundles(data.bundles);
+        } else {
+          setBundles([]);
+        }
+      } catch (error) {
+        setError(error.message);
+        toast.error("Failed to fetch bundles: " + error.message);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchBundles();
+  }, []);
+
+  useEffect(() => {
+    const fetchBundleServices = async () => {
+      try {
+        const response = await fetch("http://localhost/API/bundles.php");
+        if (!response.ok) throw new Error("Failed to fetch bundle services");
+
+        const data = await response.json();
+
+        // ✅ Fix: Handle the response structure properly
+        const bundles = data.bundles || []; // Access the bundles array
+
+        const map = {};
+        bundles.forEach((bundle) => {
+          map[bundle.id] = bundle.services || []; // Use 'id' instead of 'bundle_id'
+        });
+
+        setBundleServiceMap(map);
+      } catch (error) {
+        console.error("Error fetching bundle services:", error);
+      }
+    };
+
+    fetchBundleServices();
   }, []);
 
   const fetchPremiumServices = async (membershipType) => {
@@ -383,30 +470,88 @@ export default function ServiceOrderPage() {
     0
   );
 
+  const premiumServiceIds = membershipServices.map((s) => s.id);
+  const premiumSubtotal = selectedServices
+    .filter(
+      (service) =>
+        premiumServiceIds.includes(service.id) &&
+        !service.isFromPromo &&
+        !service.isFromBundle
+    )
+    .reduce((sum, service) => sum + service.price * service.quantity, 0);
+
+  // Calculate membership eligibility
+  const canUseDiscountServices =
+    isMember &&
+    useMembership &&
+    // Regular members can always use discounts
+    (!isNewMember ||
+      // New members can use discounts ONLY when balance is 0 or less
+      (isNewMember && membershipBalance <= 0));
+
+  // Apply 50% discount only if eligible
+  const membershipDiscountAmount = canUseDiscountServices
+    ? premiumSubtotal * 0.5
+    : 0;
+
+  // For new members with balance, only deduct from balance (no discount)
+  const membershipBalanceDeduction =
+    isMember && useMembership && isNewMember && membershipBalance > 0
+      ? (() => {
+          // Calculate subtotal for services that ARE eligible for balance deduction
+          const eligibleForBalanceDeduction = selectedServices
+            .filter((service) => !service.isFromPromo && !service.isFromBundle)
+            .reduce(
+              (sum, service) => sum + service.price * service.quantity,
+              0
+            );
+
+          // Only apply balance deduction to eligible services (minus promos/discounts proportionally)
+          const eligibleAmount = Math.max(
+            eligibleForBalanceDeduction - promoReduction - discountReduction,
+            0
+          );
+
+          return Math.min(membershipBalance, eligibleAmount);
+        })()
+      : 0;
+
+  const updateQuantity = (serviceId, newQuantity) => {
+    setSelectedServices((prev) =>
+      prev.map((service) =>
+        service.id === serviceId
+          ? { ...service, quantity: Math.max(1, newQuantity) } // prevent 0 or negative
+          : service
+      )
+    );
+  };
+
   const confirmSave = async () => {
     if (!selectedCustomer || selectedServices.length === 0) {
       toast.warning("Please select a customer and at least one service.");
       return;
     }
 
-    const appliedMembershipReduction =
-      isMember && useMembership ? membershipReduction : 0;
-
-    const newBalance =
-      isMember && useMembership
-        ? membershipBalance - appliedMembershipReduction
-        : membershipBalance;
+    // Use the already calculated membership amounts
+    const appliedMembershipDiscount = membershipDiscountAmount;
+    const appliedMembershipBalance = membershipBalanceDeduction;
 
     const servicesTotal = selectedServices.reduce(
       (sum, service) => sum + service.price * service.quantity,
       0
     );
 
+    const newBalance =
+      isMember && useMembership
+        ? Math.max(0, membershipBalance - appliedMembershipBalance)
+        : membershipBalance;
+
     const grandTotal =
       servicesTotal -
       promoReduction -
       discountReduction -
-      (useMembership ? appliedMembershipReduction : 0);
+      appliedMembershipDiscount -
+      appliedMembershipBalance;
 
     const orderData = {
       order_number: orderNumber,
@@ -421,7 +566,8 @@ export default function ServiceOrderPage() {
       subtotal: servicesTotal,
       discount: discount, // keep full object if needed for reference
       promo: promoApplied || null,
-      membershipReduction: appliedMembershipReduction,
+      membershipDiscount: appliedMembershipDiscount,
+      membershipBalanceDeduction: appliedMembershipBalance,
       grand_total: grandTotal,
       employee_name: currentUser?.name || "Unknown",
       is_member: isMember,
@@ -434,7 +580,14 @@ export default function ServiceOrderPage() {
       const response = await fetch("http://localhost/API/saveAcquire.php", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(orderData),
+        body: JSON.stringify({
+          ...orderData,
+          promoReduction,
+          discountReduction,
+          // Remove membershipReduction and send the individual components instead
+          membershipDiscount: appliedMembershipDiscount,
+          membershipBalanceDeduction: appliedMembershipBalance,
+        }),
       });
 
       const text = await response.text();
@@ -446,6 +599,16 @@ export default function ServiceOrderPage() {
           toast.success("Service acquired successfully!");
           setSavedOrderData(orderData);
           setCurrentStep(4);
+
+          // If a new member's balance is now zero (or below), flip eligibility to allow discounts next time
+          if (isNewMember && newBalance <= 0) {
+            try {
+              if (selectedCustomer?.id) {
+                localStorage.removeItem(`newMember:${selectedCustomer.id}`);
+              }
+            } catch (_) {}
+            setIsNewMember(false);
+          }
         } else {
           toast.error(result.error || "Save failed");
         }
@@ -457,6 +620,27 @@ export default function ServiceOrderPage() {
       console.error("Save failed", err);
       toast.error("Network error occurred");
     }
+  };
+
+  // Add these helper functions
+  const calculateTotalOriginalPrice = (services) => {
+    if (!services || !Array.isArray(services)) return 0;
+    return services.reduce((total, service) => {
+      return total + parseFloat(service.price || service.originalPrice || 0);
+    }, 0);
+  };
+
+  const calculateBundleSavings = (bundle, services) => {
+    if (
+      !services ||
+      !Array.isArray(services) ||
+      !services.length ||
+      !bundle.price
+    )
+      return 0;
+
+    const totalOriginalPrice = calculateTotalOriginalPrice(services);
+    return totalOriginalPrice - parseFloat(bundle.price);
   };
 
   const handleNewTransaction = () => {
@@ -475,6 +659,8 @@ export default function ServiceOrderPage() {
       .toString()
       .padStart(3, "0");
     setOrderNumber(`INV-${year}${month}${day}-${randomNum}`);
+
+    router.refresh();
   };
 
   const handleClearAll = () => {
@@ -594,6 +780,8 @@ export default function ServiceOrderPage() {
     setMembershipBalance(customer.balance); // ✅ set balance here
     setMembershipExpiration(customer.expirationDate); // ✅ set expiration
     setSelectedCustomer(customer);
+    // Determine if this is a first-time/new member using localStorage flag hydrated in customers list
+    setIsNewMember(!!customer.isNewMember);
     setIsCustomerModalOpen(false);
   };
 
@@ -661,9 +849,19 @@ export default function ServiceOrderPage() {
     window.location.href = "/home";
   };
 
-  const filteredCategories = serviceCategories.filter((category) =>
-    category.name.toLowerCase().includes(categorySearch.toLowerCase())
+  const filteredCategories = serviceCategories.filter((category) => {
+  const query = searchQuery.toLowerCase();
+
+  // Match category name
+  const matchesCategory = category.name.toLowerCase().includes(query);
+
+  // Match any service name within the category
+  const matchesService = category.services?.some((service) =>
+    service.name.toLowerCase().includes(query)
   );
+
+  return matchesCategory || matchesService;
+});
 
   const handleNewCustomerChange = (e) => {
     const { name, value } = e.target;
@@ -682,276 +880,235 @@ export default function ServiceOrderPage() {
       <Toaster />
 
       {/* Enhanced Sidebar */}
-            <div className="flex flex-1">
-              <nav className="w-64 h-screen bg-gradient-to-b from-emerald-800 to-emerald-700 text-white flex flex-col items-start py-6 fixed top-0 left-0 shadow-lg z-10">
-                {/* Logo/Branding with subtle animation */}
-                <motion.div
-                  className="flex items-center space-x-2 mb-8 px-6"
-                  initial={{ opacity: 0, y: -20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.3 }}
+      <div className="flex flex-1">
+        <nav className="w-64 h-screen bg-gradient-to-b from-emerald-800 to-emerald-700 text-white flex flex-col items-start py-6 fixed top-0 left-0 shadow-lg z-10">
+          {/* Logo/Branding with subtle animation */}
+          <motion.div
+            className="flex items-center space-x-2 mb-8 px-6"
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.3 }}
+          >
+            <div className="p-2 bg-white/10 rounded-lg">
+              <Leaf size={24} className="text-emerald-300" />
+            </div>
+            <h1 className="text-xl font-bold text-white font-sans tracking-tight">
+              Lizly Skin Care Clinic
+            </h1>
+          </motion.div>
+
+          {/* Search for Mobile (hidden on desktop) */}
+          <div className="px-4 mb-4 w-full lg:hidden">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-emerald-300" size={18} />
+              <input
+                type="text"
+                placeholder="Search menu..."
+                className="pl-10 pr-4 py-2 rounded-lg bg-emerald-900/50 text-white w-full focus:outline-none focus:ring-2 focus:ring-emerald-500 placeholder-emerald-300"
+              />
+            </div>
+          </div>
+
+          {/* Menu Items with Active State Highlight */}
+          <div className="w-full px-4 space-y-1 overflow-y-auto flex-grow custom-scrollbar">
+            {/* Dashboard */}
+            <Menu as="div" className="relative w-full">
+              <Link href="/home2" passHref>
+                <Menu.Button
+                  as="div"
+                  className={`w-full p-3 rounded-lg text-left flex items-center cursor-pointer transition-all ${router.pathname === '/home' ? 'bg-emerald-600 shadow-md' : 'hover:bg-emerald-600/70'}`}
                 >
-                  <div className="p-2 bg-white/10 rounded-lg">
-                    <Leaf size={24} className="text-emerald-300" />
+                  <div className={`p-1.5 mr-3 rounded-lg ${router.pathname === '/home' ? 'bg-white text-emerald-700' : 'bg-emerald-900/30 text-white'}`}>
+                    <Home size={18} />
                   </div>
-                  <h1 className="text-xl font-bold text-white font-sans tracking-tight">
-                    Lizly Skin Care Clinic
-                  </h1>
-                </motion.div>
-      
-                {/* Search for Mobile (hidden on desktop) */}
-                <div className="px-4 mb-4 w-full lg:hidden">
-                  <div className="relative">
-                    <Search
-                      className="absolute left-3 top-1/2 transform -translate-y-1/2 text-emerald-300"
-                      size={18}
+                  <span>Dashboard</span>
+                  {router.pathname === '/home2' && (
+                    <motion.div
+                      className="ml-auto w-2 h-2 bg-white rounded-full"
+                      initial={{ scale: 0 }}
+                      animate={{ scale: 1 }}
                     />
-                    <input
-                      type="text"
-                      placeholder="Search menu..."
-                      className="pl-10 pr-4 py-2 rounded-lg bg-emerald-900/50 text-white w-full focus:outline-none focus:ring-2 focus:ring-emerald-500 placeholder-emerald-300"
-                    />
-                  </div>
-                </div>
-      
-                {/* Menu Items with Active State Highlight */}
-                <div className="w-full px-4 space-y-1 overflow-y-auto flex-grow custom-scrollbar">
-                  {/* Dashboard */}
-                  <Menu as="div" className="relative w-full">
-                    <Link href="/home" passHref>
-                      <Menu.Button
-                        as="div"
-                        className={`w-full p-3 rounded-lg text-left flex items-center cursor-pointer transition-all ${router.pathname === "/home" ? "bg-emerald-600 shadow-md" : "hover:bg-emerald-600/70"}`}
-                      >
-                        <div
-                          className={`p-1.5 mr-3 rounded-lg ${router.pathname === "/home" ? "bg-white text-emerald-700" : "bg-emerald-900/30 text-white"}`}
-                        >
-                          <Home size={18} />
-                        </div>
-                        <span>Dashboard</span>
-                        {router.pathname === "/home2" && (
-                          <motion.div
-                            className="ml-auto w-2 h-2 bg-white rounded-full"
-                            initial={{ scale: 0 }}
-                            animate={{ scale: 1 }}
-                          />
-                        )}
-                      </Menu.Button>
-                    </Link>
-                  </Menu>
-      
-                  {/* Services Dropdown - Enhanced */}
-                  <Menu as="div" className="relative w-full">
-                    {({ open }) => (
-                      <>
-                        <Menu.Button
-                          className={`w-full p-3 rounded-lg text-left flex items-center justify-between transition-all ${open ? "bg-emerald-600" : "hover:bg-emerald-600/70"}`}
-                        >
-                          <div className="flex items-center">
-                            <div
-                              className={`p-1.5 mr-3 rounded-lg ${open ? "bg-white text-emerald-700" : "bg-emerald-900/30 text-white"}`}
-                            >
-                              <Layers size={18} />
-                            </div>
-                            <span>Services</span>
-                          </div>
-                          <motion.div
-                            animate={{ rotate: open ? 180 : 0 }}
-                            transition={{ duration: 0.2 }}
-                            className="text-emerald-300"
-                          >
-                            <ChevronDown size={18} />
-                          </motion.div>
-                        </Menu.Button>
-      
-                        <AnimatePresence>
-                          {open && (
-                            <Menu.Items
-                              as={motion.div}
-                              static
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: "auto" }}
-                              exit={{ opacity: 0, height: 0 }}
-                              transition={{ duration: 0.2 }}
-                              className="mt-1 ml-3 w-full bg-emerald-700/90 text-white rounded-lg shadow-lg overflow-hidden"
-                            >
-                              {[
-                                {
-                                  href: "/servicess2",
-                                  label: "All Services",
-                                  icon: <Layers size={16} />,
-                                },
-                                {
-                                  href: "/membership2",
-                                  label: "Memberships",
-                                  icon: <UserPlus size={16} />,
-                                  badge: 3,
-                                },
-                                {
-                                  href: "/items2",
-                                  label: "Beauty Deals",
-                                  icon: <Tag size={16} />,
-                                  badge: "New",
-                                },
-                                {
-                                  href: "/serviceorder2",
-                                  label: "Service Acquire",
-                                  icon: <ClipboardList size={16} />,
-                                },
-                              ].map((link, index) => (
-                                <Menu.Item key={link.href}>
-                                  {({ active }) => (
-                                    <motion.div
-                                      initial={{ opacity: 0, x: -10 }}
-                                      animate={{ opacity: 1, x: 0 }}
-                                      transition={{ delay: index * 0.05 }}
-                                    >
-                                      <Link
-                                        href={link.href}
-                                        className={`flex items-center justify-between space-x-3 p-3 ${active ? "bg-emerald-600" : ""} ${router.pathname === link.href ? "bg-emerald-600 font-medium" : ""}`}
-                                      >
-                                        <div className="flex items-center">
-                                          <span
-                                            className={`mr-3 ${router.pathname === link.href ? "text-white" : "text-emerald-300"}`}
-                                          >
-                                            {link.icon}
-                                          </span>
-                                          <span>{link.label}</span>
-                                        </div>
-                                        {link.badge && (
-                                          <span
-                                            className={`text-xs px-2 py-0.5 rounded-full ${typeof link.badge === "number" ? "bg-amber-500" : "bg-emerald-500"}`}
-                                          >
-                                            {link.badge}
-                                          </span>
-                                        )}
-                                      </Link>
-                                    </motion.div>
-                                  )}
-                                </Menu.Item>
-                              ))}
-                            </Menu.Items>
-                          )}
-                        </AnimatePresence>
-                      </>
-                    )}
-                  </Menu>
-      
-                  {/* Sales Dropdown - Enhanced */}
-                  <Menu as="div" className="relative w-full">
-                    {({ open }) => (
-                      <>
-                        <Menu.Button
-                          className={`w-full p-3 rounded-lg text-left flex items-center justify-between transition-all ${open ? "bg-emerald-600" : "hover:bg-emerald-600/70"}`}
-                        >
-                          <div className="flex items-center">
-                            <div
-                              className={`p-1.5 mr-3 rounded-lg ${open ? "bg-white text-emerald-700" : "bg-emerald-900/30 text-white"}`}
-                            >
-                              <BarChart2 size={18} />
-                            </div>
-                            <span>Sales</span>
-                          </div>
-                          <motion.div
-                            animate={{ rotate: open ? 180 : 0 }}
-                            transition={{ duration: 0.2 }}
-                            className="text-emerald-300"
-                          >
-                            <ChevronDown size={18} />
-                          </motion.div>
-                        </Menu.Button>
-      
-                        <AnimatePresence>
-                          {open && (
-                            <Menu.Items
-                              as={motion.div}
-                              static
-                              initial={{ opacity: 0, height: 0 }}
-                              animate={{ opacity: 1, height: "auto" }}
-                              exit={{ opacity: 0, height: 0 }}
-                              transition={{ duration: 0.2 }}
-                              className="mt-1 ml-3 w-full bg-emerald-700/90 text-white rounded-lg shadow-lg overflow-hidden"
-                            >
-                              {[
-                                {
-                                  href: "/customers2",
-                                  label: "Customers",
-                                  icon: <Users size={16} />,
-                                },
-                                {
-                                  href: "/invoices2",
-                                  label: "Invoices",
-                                  icon: <FileText size={16} />,
-                                },
-                              ].map((link, index) => (
-                                <Menu.Item key={link.href}>
-                                  {({ active }) => (
-                                    <motion.div
-                                      initial={{ opacity: 0, x: -10 }}
-                                      animate={{ opacity: 1, x: 0 }}
-                                      transition={{ delay: index * 0.05 }}
-                                    >
-                                      <Link
-                                        href={link.href}
-                                        className={`flex items-center justify-between space-x-3 p-3 ${active ? "bg-emerald-600" : ""} ${router.pathname === link.href ? "bg-emerald-600 font-medium" : ""}`}
-                                      >
-                                        <div className="flex items-center">
-                                          <span
-                                            className={`mr-3 ${router.pathname === link.href ? "text-white" : "text-emerald-300"}`}
-                                          >
-                                            {link.icon}
-                                          </span>
-                                          <span>{link.label}</span>
-                                        </div>
-                                        {link.count && (
-                                          <span className="text-xs text-emerald-200">
-                                            {link.count}
-                                          </span>
-                                        )}
-                                      </Link>
-                                    </motion.div>
-                                  )}
-                                </Menu.Item>
-                              ))}
-                            </Menu.Items>
-                          )}
-                        </AnimatePresence>
-                      </>
-                    )}
-                  </Menu>
-                </div>
-      
-                {/* Enhanced Sidebar Footer */}
-                <motion.div
-                  className="mt-auto px-6 w-full"
-                  initial={{ opacity: 0 }}
-                  animate={{ opacity: 1 }}
-                  transition={{ delay: 0.5 }}
-                >
-                  <div className="border-t border-emerald-600 pt-4 pb-2">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="flex items-center space-x-2">
-                        <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center">
-                          <User size={16} />
-                        </div>
-                        <div>
-                          <p className="text-sm font-medium">Reception User</p>
-                          <p className="text-xs text-emerald-300">Receptionist</p>
-                        </div>
+                  )}
+                </Menu.Button>
+              </Link>
+            </Menu>
+
+            {/* Services Dropdown - Enhanced */}
+            <Menu as="div" className="relative w-full">
+              {({ open }) => (
+                <>
+                  <Menu.Button
+                    className={`w-full p-3 rounded-lg text-left flex items-center justify-between transition-all ${open ? 'bg-emerald-600' : 'hover:bg-emerald-600/70'}`}
+                  >
+                    <div className="flex items-center">
+                      <div className={`p-1.5 mr-3 rounded-lg ${open ? 'bg-white text-emerald-700' : 'bg-emerald-900/30 text-white'}`}>
+                        <Layers size={18} />
                       </div>
-                      <button className="text-emerald-300 hover:text-white transition-colors">
-                        <LogOut size={18} />
-                      </button>
+                      <span>Services</span>
                     </div>
-                    <p className="text-xs text-emerald-200 mt-3">
-                      Lizly Skin Care Clinic v1.2.0
-                    </p>
-                    <p className="text-xs text-emerald-300 mt-1">
-                      © {new Date().getFullYear()} All Rights Reserved
-                    </p>
+                    <motion.div
+                      animate={{ rotate: open ? 180 : 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="text-emerald-300"
+                    >
+                      <ChevronDown size={18} />
+                    </motion.div>
+                  </Menu.Button>
+
+                  <AnimatePresence>
+                    {open && (
+                      <Menu.Items
+                        as={motion.div}
+                        static
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="mt-1 ml-3 w-full bg-emerald-700/90 text-white rounded-lg shadow-lg overflow-hidden"
+                      >
+                        {[
+                          { href: "/servicess2", label: "All Services", icon: <Layers size={16} /> },
+                          { href: "/membership2", label: "Memberships", icon: <UserPlus size={16} />, badge: 3 },
+                          { href: "/items2", label: "Beauty Deals", icon: <Tag size={16} />, badge: 'New' },
+                          { href: "/serviceorder2", label: "Service Acquire", icon: <ClipboardList size={16} /> },
+                        ].map((link, index) => (
+                          <Menu.Item key={link.href}>
+                            {({ active }) => (
+                              <motion.div
+                                initial={{ opacity: 0, x: -10 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: index * 0.05 }}
+                              >
+                                <Link
+                                  href={link.href}
+                                  className={`flex items-center justify-between space-x-3 p-3 ${active ? 'bg-emerald-600' : ''} ${router.pathname === link.href ? 'bg-emerald-600 font-medium' : ''}`}
+                                >
+                                  <div className="flex items-center">
+                                    <span className={`mr-3 ${router.pathname === link.href ? 'text-white' : 'text-emerald-300'}`}>
+                                      {link.icon}
+                                    </span>
+                                    <span>{link.label}</span>
+                                  </div>
+                                  {link.badge && (
+                                    <span className={`text-xs px-2 py-0.5 rounded-full ${typeof link.badge === 'number' ? 'bg-amber-500' : 'bg-emerald-500'}`}>
+                                      {link.badge}
+                                    </span>
+                                  )}
+                                </Link>
+                              </motion.div>
+                            )}
+                          </Menu.Item>
+                        ))}
+                      </Menu.Items>
+                    )}
+                  </AnimatePresence>
+                </>
+              )}
+            </Menu>
+
+            {/* Sales Dropdown - Enhanced */}
+            <Menu as="div" className="relative w-full">
+              {({ open }) => (
+                <>
+                  <Menu.Button
+                    className={`w-full p-3 rounded-lg text-left flex items-center justify-between transition-all ${open ? 'bg-emerald-600' : 'hover:bg-emerald-600/70'}`}
+                  >
+                    <div className="flex items-center">
+                      <div className={`p-1.5 mr-3 rounded-lg ${open ? 'bg-white text-emerald-700' : 'bg-emerald-900/30 text-white'}`}>
+                        <BarChart2 size={18} />
+                      </div>
+                      <span>Sales</span>
+                    </div>
+                    <motion.div
+                      animate={{ rotate: open ? 180 : 0 }}
+                      transition={{ duration: 0.2 }}
+                      className="text-emerald-300"
+                    >
+                      <ChevronDown size={18} />
+                    </motion.div>
+                  </Menu.Button>
+
+                  <AnimatePresence>
+                    {open && (
+                      <Menu.Items
+                        as={motion.div}
+                        static
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: "auto" }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.2 }}
+                        className="mt-1 ml-3 w-full bg-emerald-700/90 text-white rounded-lg shadow-lg overflow-hidden"
+                      >
+                        {[
+                          { href: "/customers2", label: "Customers", icon: <Users size={16} />, },
+                          { href: "/invoices2", label: "Invoices", icon: <FileText size={16} />, },
+                        ].map((link, index) => (
+                          <Menu.Item key={link.href}>
+                            {({ active }) => (
+                              <motion.div
+                                initial={{ opacity: 0, x: -10 }}
+                                animate={{ opacity: 1, x: 0 }}
+                                transition={{ delay: index * 0.05 }}
+                              >
+                                <Link
+                                  href={link.href}
+                                  className={`flex items-center justify-between space-x-3 p-3 ${active ? 'bg-emerald-600' : ''} ${router.pathname === link.href ? 'bg-emerald-600 font-medium' : ''}`}
+                                >
+                                  <div className="flex items-center">
+                                    <span className={`mr-3 ${router.pathname === link.href ? 'text-white' : 'text-emerald-300'}`}>
+                                      {link.icon}
+                                    </span>
+                                    <span>{link.label}</span>
+                                  </div>
+                                  {link.count && (
+                                    <span className="text-xs text-emerald-200">
+                                      {link.count}
+                                    </span>
+                                  )}
+                                </Link>
+                              </motion.div>
+                            )}
+                          </Menu.Item>
+                        ))}
+                      </Menu.Items>
+                    )}
+                  </AnimatePresence>
+                </>
+              )}
+            </Menu>
+          </div>
+
+          {/* Enhanced Sidebar Footer */}
+          <motion.div
+            className="mt-auto px-6 w-full"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            transition={{ delay: 0.5 }}
+          >
+            <div className="border-t border-emerald-600 pt-4 pb-2">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center space-x-2">
+                  <div className="w-8 h-8 rounded-full bg-emerald-600 flex items-center justify-center">
+                    <User size={16} />
                   </div>
-                </motion.div>
-              </nav>
+                  <div>
+                    <p className="text-sm font-medium">Reception User</p>
+                    <p className="text-xs text-emerald-300">Receptionist</p>
+                  </div>
+                </div>
+                <button className="text-emerald-300 hover:text-white transition-colors">
+                  <LogOut size={18} />
+                </button>
+              </div>
+              <p className="text-xs text-emerald-200 mt-3">
+                Lizly Skin Care Clinic v1.2.0
+              </p>
+              <p className="text-xs text-emerald-300 mt-1">
+                © {new Date().getFullYear()} All Rights Reserved
+              </p>
+            </div>
+          </motion.div>
+        </nav>
 
         {/* Main Content - Service Order */}
         <main className="flex-1 p-6 bg-gray-50 text-gray-900 ml-64">
@@ -1044,6 +1201,7 @@ export default function ServiceOrderPage() {
                               {customerName}
                             </h3>
                             <div className="flex items-center mt-1">
+                              {/* Member / Regular Customer badge */}
                               <span
                                 className={`text-xs px-2 py-1 rounded-full ${
                                   isMember
@@ -1053,9 +1211,18 @@ export default function ServiceOrderPage() {
                               >
                                 {isMember ? "Member" : "Regular Customer"}
                               </span>
+
+                              {/* Expiration date (if applicable) */}
                               {isMember && membershipExpiration && (
                                 <span className="text-xs text-gray-500 ml-2">
                                   Expires: {formatDate(membershipExpiration)}
+                                </span>
+                              )}
+
+                              {/* 🆕 New Member badge */}
+                              {isNewMember && (
+                                <span className="text-xs ml-2 bg-yellow-100 text-yellow-800 px-2 py-1 rounded-full font-medium animate-pulse">
+                                  New Member
                                 </span>
                               )}
                             </div>
@@ -1087,11 +1254,32 @@ export default function ServiceOrderPage() {
                               </span>
                               <span className="font-medium text-emerald-600">
                                 ₱
-                                {Math.max(
-                                  0,
-                                  membershipBalance -
-                                    (useMembership ? membershipReduction : 0)
-                                ).toLocaleString()}
+                                {(() => {
+                                  const total = selectedServices.reduce(
+                                    (sum, service) =>
+                                      sum +
+                                      service.price * (service.quantity || 1),
+                                    0
+                                  );
+                                  const payable = Math.max(
+                                    total -
+                                      (promoReduction || 0) -
+                                      (discountReduction || 0),
+                                    0
+                                  );
+                                  const deduction = useMembership
+                                    ? isNewMember
+                                      ? Math.min(
+                                          membershipBalance || 0,
+                                          payable
+                                        )
+                                      : membershipDiscountAmount
+                                    : 0;
+                                  return Math.max(
+                                    0,
+                                    membershipBalance - deduction
+                                  ).toLocaleString();
+                                })()}
                               </span>
                             </div>
                           </div>
@@ -1236,14 +1424,14 @@ export default function ServiceOrderPage() {
                       Service Categories
                     </h2>
                     <div className="mb-4">
-                      <input
-                        type="text"
-                        placeholder="Search categories..."
-                        value={categorySearch}
-                        onChange={(e) => setCategorySearch(e.target.value)}
-                        className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
-                      />
-                    </div>
+  <input
+    type="text"
+    placeholder="Search categories or services..."
+    value={searchQuery}
+    onChange={(e) => setSearchQuery(e.target.value)}
+    className="w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-transparent"
+  />
+</div>
                     <div className="space-y-2 max-h-[500px] overflow-y-auto">
                       {filteredCategories.map((category) => (
                         <motion.button
@@ -1306,9 +1494,26 @@ export default function ServiceOrderPage() {
                             >
                               <div className="flex justify-between items-start">
                                 <h3 className="font-medium">{service.name}</h3>
-                                <span className="font-bold text-emerald-600">
-                                  {formatCurrency(service.price)}
-                                </span>
+                                <div className="text-right">
+                                  {isMember &&
+                                  membershipServices.some(
+                                    (p) => p.id === service.id
+                                  ) &&
+                                  useMembership ? (
+                                    <>
+                                      <span className="font-bold text-emerald-600">
+                                        {formatCurrency(service.price * 0.5)}
+                                      </span>
+                                      <div className="text-xs text-gray-500 line-through">
+                                        {formatCurrency(service.price)}
+                                      </div>
+                                    </>
+                                  ) : (
+                                    <span className="font-bold text-emerald-600">
+                                      {formatCurrency(service.price)}
+                                    </span>
+                                  )}
+                                </div>
                               </div>
 
                               <p className="text-sm text-gray-500 mt-1">
@@ -1320,7 +1525,22 @@ export default function ServiceOrderPage() {
                                   (p) => p.id === service.id
                                 ) && (
                                   <span className="inline-block mt-2 px-2 py-0.5 text-xs bg-emerald-100 text-emerald-800 rounded-full">
-                                    Membership Discount
+                                    {canUseDiscountServices
+                                      ? "50% Member Discount Applied"
+                                      : membershipBalance > 0
+                                        ? "Can use membership balance"
+                                        : "Member Discount Available"}
+                                  </span>
+                                )}
+
+                              {/* Add badges for promo/bundle services that CANNOT use balance */}
+                              {(service.isFromPromo || service.isFromBundle) &&
+                                isNewMember &&
+                                membershipBalance > 0 && (
+                                  <span className="inline-block mt-1 px-2 py-0.5 text-xs bg-gray-100 text-gray-600 rounded-full ml-1">
+                                    {service.isFromPromo
+                                      ? "Promo - No balance used"
+                                      : "Bundle - No balance used"}
                                   </span>
                                 )}
                             </motion.div>
@@ -1334,86 +1554,167 @@ export default function ServiceOrderPage() {
                 {/* Selected Services & Summary */}
                 <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
                   {/* Selected Services */}
-                  <div className="lg:col-span-2 bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                    <div className="flex justify-between items-center mb-4">
-                      <h2 className="font-semibold flex items-center">
-                        <ShoppingCart className="mr-2" size={18} />
-                        Selected Services ({selectedServices.length})
-                      </h2>
-                      {selectedServices.length > 0 && (
-                        <button
-                          onClick={() => setSelectedServices([])}
-                          className="text-sm text-red-500 hover:text-red-700 flex items-center"
-                        >
-                          <Trash2 className="mr-1" size={16} />
-                          Clear All
-                        </button>
-                      )}
-                    </div>
+<div className="lg:col-span-2 bg-white p-6 rounded-xl border border-gray-200 shadow-sm">
+  {/* Header */}
+  <div className="flex justify-between items-center mb-4">
+    <h2 className="font-semibold text-gray-900 flex items-center text-lg">
+      <ShoppingCart className="mr-2" size={20} />
+      Selected Services
+      <span className="ml-2 bg-blue-100 text-blue-800 px-2 py-1 rounded-full text-sm">
+        {selectedServices.length}
+      </span>
+    </h2>
+    {selectedServices.length > 0 && (
+      <button
+        onClick={() => {
+          setSelectedServices([]);
+          setSelectedPromoServices({});
+          setPromoApplied(null);
+          toast.info("All selected services cleared");
+        }}
+        className="text-sm text-red-600 hover:text-red-800 flex items-center transition-colors"
+      >
+        <Trash2 className="mr-1" size={16} />
+        Clear All
+      </button>
+    )}
+  </div>
 
-                    {selectedServices.map((service, index) => (
-                      <motion.div
-                        key={`${service.id}-${index}`}
-                        className="flex justify-between items-center p-3 bg-gray-50 rounded-lg border border-gray-200"
-                        initial={{ opacity: 0, x: -10 }}
-                        animate={{ opacity: 1, x: 0 }}
-                        exit={{ opacity: 0, x: 10 }}
-                        transition={{ delay: index * 0.05 }}
-                      >
-                        <div className="flex items-center gap-3">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              removeService(service.id);
-                            }}
-                            className="text-red-500 hover:text-red-700"
-                          >
-                            <X size={16} />
-                          </button>
-                          <div>
-                            <p className="font-medium">{service.name}</p>
-                            <p className="text-xs text-gray-500">
-                              {serviceCategories.find((cat) =>
-                                cat.services.some((s) => s.id === service.id)
-                              )?.name || "General"}
-                            </p>
-                          </div>
-                        </div>
+  {/* Scrollable list */}
+  <div className="max-h-96 overflow-y-auto space-y-3 pr-2">
+    {selectedServices.length === 0 ? (
+      <div className="text-center py-8 text-gray-500">
+        <ShoppingCart size={48} className="mx-auto mb-3 text-gray-300" />
+        <p>No services selected yet</p>
+        <p className="text-sm mt-1">
+          Choose services from the list or browse promos
+        </p>
+      </div>
+    ) : (
+      // Ensure deduplication by service ID + bundleId
+      [...new Map(
+        selectedServices.map((s) => [s.id + (s.bundleId || ""), s])
+      ).values()].map((service, index) => (
+        <motion.div
+          key={`${service.id}-${index}`}
+          className="grid grid-cols-[auto_1fr_auto_auto] items-center gap-4 p-4 bg-white rounded-lg border border-gray-200 hover:border-blue-200 transition-colors"
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          exit={{ opacity: 0, x: 10 }}
+          transition={{ delay: index * 0.05 }}
+        >
+          {/* Remove button */}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
 
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() =>
-                              updateQuantity(service.id, service.quantity - 1)
-                            }
-                            className="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300"
-                            disabled={service.quantity === 1}
-                          >
-                            -
-                          </button>
-                          <span>{service.quantity}</span>
-                          <button
-                            onClick={() =>
-                              updateQuantity(service.id, service.quantity + 1)
-                            }
-                            className="px-2 py-1 bg-gray-200 rounded hover:bg-gray-300"
-                          >
-                            +
-                          </button>
-                        </div>
+              if (service.isFromBundle && service.bundleId) {
+                // Remove all services from the same bundle
+                setSelectedServices((prev) =>
+                  prev.filter((s) => s.bundleId !== service.bundleId)
+                );
+                toast.info(`"${service.bundleName}" bundle removed from cart`);
+              } else {
+                // Remove single service
+                removeService(service.id);
 
-                        <span className="font-bold">
-                          ₱
-                          {(service.price * service.quantity).toLocaleString(
-                            "en-PH",
-                            {
-                              minimumFractionDigits: 2,
-                              maximumFractionDigits: 2,
-                            }
-                          )}
-                        </span>
-                      </motion.div>
-                    ))}
-                  </div>
+                // Also remove from selectedPromoServices if it's from a promo
+                if (service.isFromPromo && service.promoId) {
+                  setSelectedPromoServices((prev) => ({
+                    ...prev,
+                    [service.promoId]: {
+                      ...prev[service.promoId],
+                      [service.id]: false,
+                    },
+                  }));
+                }
+              }
+            }}
+            className="text-red-500 hover:text-red-700 transition-colors p-1 rounded"
+          >
+            <X size={18} />
+          </button>
+
+          {/* Service info */}
+          <div className="min-w-0">
+            <p className="font-medium text-gray-900 truncate">
+              {service.name}
+            </p>
+            <div className="flex items-center space-x-2 mt-1">
+              <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded">
+                {serviceCategories.find((cat) =>
+                  cat.services.some((s) => s.id === service.id)
+                )?.name || "General"}
+              </span>
+              {service.isFromPromo && (
+                <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">
+                  Promo Discount
+                </span>
+              )}
+              {service.isFromBundle && (
+                <span className="text-xs bg-purple-100 text-purple-800 px-2 py-1 rounded">
+                  Bundle
+                </span>
+              )}
+            </div>
+          </div>
+
+          {/* Quantity controls — hide for bundle services */}
+          {!service.isFromBundle && (
+            <div className="flex items-center gap-2 bg-gray-50 rounded-lg p-1">
+              <button
+                onClick={() =>
+                  updateQuantity(service.id, service.quantity - 1)
+                }
+                className="w-8 h-8 flex items-center justify-center bg-white border border-gray-300 rounded hover:bg-gray-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                disabled={service.quantity === 1}
+              >
+                -
+              </button>
+              <span className="w-8 text-center font-medium text-gray-900">
+                {service.quantity}
+              </span>
+              <button
+                onClick={() =>
+                  updateQuantity(service.id, service.quantity + 1)
+                }
+                className="w-8 h-8 flex items-center justify-center bg-white border border-gray-300 rounded hover:bg-gray-100"
+              >
+                +
+              </button>
+            </div>
+          )}
+
+          {/* Price */}
+          <div className="text-right min-w-24">
+            <div className="font-bold text-gray-900">
+              ₱
+              {(
+                (service.isFromBundle ? service.price : service.price * service.quantity)
+              ).toLocaleString("en-PH", {
+                minimumFractionDigits: 2,
+                maximumFractionDigits: 2,
+              })}
+            </div>
+            {service.originalPrice &&
+              service.originalPrice > service.price && (
+                <div className="text-xs text-gray-500 line-through">
+                  ₱
+                  {(
+                    (service.isFromBundle ? service.originalPrice : service.originalPrice * service.quantity)
+                  ).toLocaleString("en-PH", {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </div>
+              )}
+          </div>
+        </motion.div>
+      ))
+    )}
+  </div>
+</div>
+
 
                   {/* Order Summary */}
                   <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
@@ -1444,12 +1745,36 @@ export default function ServiceOrderPage() {
                         </div>
                       )}
 
-                      {isMember && useMembership && membershipReduction > 0 && (
+                      {/* Membership Discount (50% off premium services) */}
+                      {membershipDiscountAmount > 0 && (
                         <div className="flex justify-between text-emerald-600">
-                          <span>Membership:</span>
-                          <span>-{formatCurrency(membershipReduction)}</span>
+                          <span>Membership Discount (50%):</span>
+                          <span>
+                            -{formatCurrency(membershipDiscountAmount)}
+                          </span>
                         </div>
                       )}
+
+                      {/* Membership Balance Deduction (for new members with balance) */}
+                      {membershipBalanceDeduction > 0 && (
+                        <div className="flex justify-between text-purple-600">
+                          <span>Membership Balance Used:</span>
+                          <span>
+                            -{formatCurrency(membershipBalanceDeduction)}
+                          </span>
+                        </div>
+                      )}
+
+                      {/* Show note about excluded services */}
+                      {membershipBalanceDeduction > 0 &&
+                        selectedServices.some(
+                          (s) => s.isFromPromo || s.isFromBundle
+                        ) && (
+                          <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
+                            💡 Membership balance not used for promo/bundle
+                            services
+                          </div>
+                        )}
 
                       <div className="border-t pt-3 mt-3">
                         <div className="flex justify-between font-bold text-lg">
@@ -1459,7 +1784,8 @@ export default function ServiceOrderPage() {
                               calculatedSubtotal -
                                 promoReduction -
                                 discountReduction -
-                                (useMembership ? membershipReduction : 0)
+                                membershipDiscountAmount -
+                                membershipBalanceDeduction
                             )}
                           </span>
                         </div>
@@ -1474,57 +1800,6 @@ export default function ServiceOrderPage() {
                       </h3>
 
                       <div className="space-y-3">
-                        <div>
-                          <label className="block text-xs text-gray-500 mb-1">
-                            Promo
-                          </label>
-                          <select
-                            value={promoApplied?.id || ""}
-                            onChange={(e) => {
-                              const value = e.target.value;
-                              if (value) {
-                                const selectedPromo =
-                                  promos.find((p) => p.id == value) || null;
-                                setPromoApplied(selectedPromo);
-
-                                // Add discounted services from the promo
-                                if (
-                                  selectedPromo &&
-                                  dealServiceMap[selectedPromo.id]
-                                ) {
-                                  const promoServices = dealServiceMap[
-                                    selectedPromo.id
-                                  ].map((s) => ({
-                                    id: s.service_id,
-                                    name: s.name,
-                                    category: s.category,
-                                    price: parseFloat(s.discountedPrice), // use discounted price
-                                    quantity: 1,
-                                  }));
-
-                                  // Merge with existing selected services
-                                  setSelectedServices((prev) => [
-                                    ...prev,
-                                    ...promoServices,
-                                  ]);
-                                }
-                              } else {
-                                setPromoApplied(null);
-                              }
-                            }}
-                            className="w-full p-2 text-sm border border-gray-300 rounded-lg"
-                          >
-                            <option value="">Select Promo</option>
-                            {promos
-                              .filter((p) => p.status === "active")
-                              .map((promo) => (
-                                <option key={promo.id} value={promo.id}>
-                                  {promo.name}
-                                </option>
-                              ))}
-                          </select>
-                        </div>
-
                         <div>
                           <label className="block text-xs text-gray-500 mb-1">
                             Discount
@@ -1557,6 +1832,650 @@ export default function ServiceOrderPage() {
                         </div>
                       </div>
                     </div>
+
+                    <div className="mb-4">
+                      <h3 className="text-sm font-medium mb-2 flex items-center">
+                        <Info className="mr-2" size={16} />
+                        View Available Offers
+                      </h3>
+
+                      <div className="grid grid-cols-2 gap-2">
+                        <motion.button
+                          onClick={() => setIsPromoListOpen(true)}
+                          className="flex items-center justify-center space-x-2 py-2 px-3 bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg border border-blue-200 text-sm"
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                        >
+                          <Tag size={16} />
+                          <span>View Promos</span>
+                        </motion.button>
+
+                        <motion.button
+                          onClick={() => setIsBundleListOpen(true)}
+                          className="flex items-center justify-center space-x-2 py-2 px-3 bg-purple-50 hover:bg-purple-100 text-purple-700 rounded-lg border border-purple-200 text-sm"
+                          whileHover={{ scale: 1.02 }}
+                          whileTap={{ scale: 0.98 }}
+                        >
+                          <Package size={16} />
+                          <span>View Bundles</span>
+                        </motion.button>
+                      </div>
+                    </div>
+
+                    {/* Promo List Modal */}
+                    <Transition appear show={isPromoListOpen} as={Fragment}>
+                      <Dialog
+                        as="div"
+                        className="relative z-50"
+                        onClose={() => setIsPromoListOpen(false)}
+                      >
+                        <Transition.Child
+                          as={Fragment}
+                          enter="ease-out duration-300"
+                          enterFrom="opacity-0"
+                          enterTo="opacity-100"
+                          leave="ease-in duration-200"
+                          leaveFrom="opacity-100"
+                          leaveTo="opacity-0"
+                        >
+                          <div className="fixed inset-0 bg-black bg-opacity-25" />
+                        </Transition.Child>
+
+                        <div className="fixed inset-0 overflow-y-auto">
+                          <div className="flex min-h-full items-center justify-center p-4 text-center">
+                            <Transition.Child
+                              as={Fragment}
+                              enter="ease-out duration-300"
+                              enterFrom="opacity-0 scale-95"
+                              enterTo="opacity-100 scale-100"
+                              leave="ease-in duration-200"
+                              leaveFrom="opacity-100 scale-100"
+                              leaveTo="opacity-0 scale-95"
+                            >
+                              <Dialog.Panel className="w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all">
+                                <div className="flex justify-between items-center mb-6">
+                                  <Dialog.Title
+                                    as="h3"
+                                    className="text-lg font-semibold text-gray-900"
+                                  >
+                                    Available Promotions
+                                  </Dialog.Title>
+                                  <button
+                                    onClick={() => setIsPromoListOpen(false)}
+                                    className="text-gray-500 hover:text-gray-700"
+                                  >
+                                    <X size={24} />
+                                  </button>
+                                </div>
+
+                                {/* 🔍 Search Bar */}
+<div className="mb-4">
+  <input
+    type="text"
+    placeholder="Search promotions..."
+    value={promoSearch}
+    onChange={(e) => setPromoSearch(e.target.value)}
+    className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700"
+  />
+</div>
+
+
+                                <div className="grid gap-6 max-h-[70vh] overflow-y-auto pr-2">
+                                  {promos
+                                    .filter(
+  (p) =>
+    p.status === "active" &&
+    (!promoSearch ||
+      p.name.toLowerCase().includes(promoSearch.toLowerCase()) ||
+      p.description?.toLowerCase().includes(promoSearch.toLowerCase()))
+)
+
+                                    .map((promo) => (
+                                      <motion.div
+                                        key={promo.id}
+                                        className="border border-gray-200 rounded-lg p-6 hover:border-blue-300 transition-colors"
+                                        whileHover={{ scale: 1.005 }}
+                                      >
+                                        {/* Promo Header */}
+                                        <div className="flex justify-between items-start mb-4">
+                                          <div>
+                                            <h4 className="font-semibold text-gray-900 text-lg">
+                                              {promo.name}
+                                            </h4>
+                                            <p className="text-sm text-gray-600 mt-1">
+                                              {promo.description}
+                                            </p>
+                                          </div>
+                                          <span className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
+                                            {promo.discountValue}
+                                            {promo.discountType === "percentage"
+                                              ? "%"
+                                              : ""}{" "}
+                                            OFF
+                                          </span>
+                                        </div>
+
+                                        {/* Promo Details */}
+                                        <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+                                          <div>
+                                            <span className="text-gray-500">
+                                              Valid:{" "}
+                                            </span>
+                                            <span className="text-gray-700">
+                                              {promo.validFrom} to{" "}
+                                              {promo.validTo}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="text-gray-500">
+                                              Type:{" "}
+                                            </span>
+                                            <span className="capitalize text-gray-700">
+                                              {promo.discountType}
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        {/* Included Services with Selection */}
+                                        {dealServiceMap[promo.id] &&
+                                          dealServiceMap[promo.id].length >
+                                            0 && (
+                                            <div className="mt-4">
+                                              <div className="flex justify-between items-center mb-3">
+                                                <h5 className="text-sm font-medium text-gray-700">
+                                                  Select Services to Add:
+                                                </h5>
+                                                <div className="flex items-center space-x-2">
+                                                  <button
+                                                    onClick={() => {
+                                                      // Select all services
+                                                      const allSelected = {};
+                                                      dealServiceMap[
+                                                        promo.id
+                                                      ].forEach((service) => {
+                                                        allSelected[
+                                                          service.service_id
+                                                        ] = true;
+                                                      });
+                                                      setSelectedPromoServices(
+                                                        (prev) => ({
+                                                          ...prev,
+                                                          [promo.id]:
+                                                            allSelected,
+                                                        })
+                                                      );
+                                                    }}
+                                                    className="text-xs text-blue-600 hover:text-blue-800"
+                                                  >
+                                                    Select All
+                                                  </button>
+                                                  <button
+                                                    onClick={() => {
+                                                      // Deselect all services
+                                                      setSelectedPromoServices(
+                                                        (prev) => ({
+                                                          ...prev,
+                                                          [promo.id]: {},
+                                                        })
+                                                      );
+                                                    }}
+                                                    className="text-xs text-gray-600 hover:text-gray-800"
+                                                  >
+                                                    Deselect All
+                                                  </button>
+                                                </div>
+                                              </div>
+
+                                              <div className="space-y-2 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-3 bg-gray-50">
+                                                {dealServiceMap[promo.id].map(
+                                                  (service, index) => (
+                                                    <label
+                                                      key={service.service_id}
+                                                      className="flex items-center justify-between p-2 hover:bg-white rounded cursor-pointer transition-colors"
+                                                    >
+                                                      <div className="flex items-center space-x-3">
+                                                        <input
+                                                          type="checkbox"
+                                                          checked={
+                                                            selectedPromoServices[
+                                                              promo.id
+                                                            ]?.[
+                                                              service.service_id
+                                                            ] || false
+                                                          }
+                                                          onChange={(e) => {
+                                                            setSelectedPromoServices(
+                                                              (prev) => ({
+                                                                ...prev,
+                                                                [promo.id]: {
+                                                                  ...prev[
+                                                                    promo.id
+                                                                  ],
+                                                                  [service.service_id]:
+                                                                    e.target
+                                                                      .checked,
+                                                                },
+                                                              })
+                                                            );
+                                                          }}
+                                                          className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+                                                        />
+                                                        <div>
+                                                          <div className="text-sm font-medium text-gray-800">
+                                                            {service.name}
+                                                          </div>
+                                                          <div className="text-xs text-gray-500">
+                                                            {service.category}
+                                                          </div>
+                                                        </div>
+                                                      </div>
+                                                      <div className="text-right">
+                                                        <div className="text-sm font-semibold text-green-600">
+                                                          ₱
+                                                          {
+                                                            service.discountedPrice
+                                                          }
+                                                        </div>
+                                                        <div className="text-xs text-gray-500 line-through">
+                                                          ₱
+                                                          {
+                                                            service.originalPrice
+                                                          }
+                                                        </div>
+                                                      </div>
+                                                    </label>
+                                                  )
+                                                )}
+                                              </div>
+                                            </div>
+                                          )}
+
+                                        {/* Action Buttons */}
+                                        <div className="mt-4 flex justify-between items-center">
+                                          <div className="text-sm text-gray-600">
+                                            {selectedPromoServices[promo.id]
+                                              ? `${Object.values(selectedPromoServices[promo.id] || {}).filter(Boolean).length} services selected`
+                                              : "No services selected"}
+                                          </div>
+                                          <div className="flex space-x-2">
+                                            <button
+                                              onClick={() => {
+                                                setSelectedPromoServices(
+                                                  (prev) => ({
+                                                    ...prev,
+                                                    [promo.id]: {},
+                                                  })
+                                                );
+                                                setIsPromoListOpen(false);
+                                              }}
+                                              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm"
+                                            >
+                                              Cancel
+                                            </button>
+                                            <button
+                                              onClick={() => {
+                                                // Add selected services to cart
+                                                if (
+                                                  selectedPromoServices[
+                                                    promo.id
+                                                  ]
+                                                ) {
+                                                  const selectedServicesFromPromo =
+                                                    dealServiceMap[promo.id]
+                                                      .filter(
+                                                        (service) =>
+                                                          selectedPromoServices[
+                                                            promo.id
+                                                          ]?.[
+                                                            service.service_id
+                                                          ]
+                                                      )
+                                                      .map((service) => ({
+                                                        id: service.service_id,
+                                                        name: service.name,
+                                                        category:
+                                                          service.category,
+                                                        price: parseFloat(
+                                                          service.discountedPrice
+                                                        ),
+                                                        originalPrice:
+                                                          parseFloat(
+                                                            service.originalPrice
+                                                          ),
+                                                        quantity: 1,
+                                                        isFromPromo: true,
+                                                        promoId: promo.id,
+                                                        discountValue:
+                                                          promo.discountValue,
+                                                        discountType:
+                                                          promo.discountType,
+                                                      }));
+
+                                                  if (
+                                                    selectedServicesFromPromo.length >
+                                                    0
+                                                  ) {
+                                                    setSelectedServices(
+                                                      (prev) => [
+                                                        ...prev,
+                                                        ...selectedServicesFromPromo,
+                                                      ]
+                                                    );
+                                                    setPromoApplied(promo);
+                                                    toast.success(
+                                                      `${selectedServicesFromPromo.length} service(s) added from promo!`
+                                                    );
+                                                  } else {
+                                                    toast.info(
+                                                      "Please select at least one service from the promo"
+                                                    );
+                                                    return;
+                                                  }
+                                                }
+                                                setIsPromoListOpen(false);
+                                              }}
+                                              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm"
+                                            >
+                                              Add Selected Services
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </motion.div>
+                                    ))}
+
+                                  {promos.filter((p) => p.status === "active")
+                                    .length === 0 && (
+                                    <div className="text-center py-12 text-gray-500">
+                                      <Tag
+                                        size={48}
+                                        className="mx-auto mb-3 text-gray-300"
+                                      />
+                                      <p className="text-lg">
+                                        No active promotions available
+                                      </p>
+                                      <p className="text-sm mt-1">
+                                        Check back later for new promotions
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              </Dialog.Panel>
+                            </Transition.Child>
+                          </div>
+                        </div>
+                      </Dialog>
+                    </Transition>
+
+                    {/* Bundle List Modal */}
+                    <Transition appear show={isBundleListOpen} as={Fragment}>
+                      <Dialog
+                        as="div"
+                        className="relative z-50"
+                        onClose={() => setIsBundleListOpen(false)}
+                      >
+                        <Transition.Child
+                          as={Fragment}
+                          enter="ease-out duration-300"
+                          enterFrom="opacity-0"
+                          enterTo="opacity-100"
+                          leave="ease-in duration-200"
+                          leaveFrom="opacity-100"
+                          leaveTo="opacity-0"
+                        >
+                          <div className="fixed inset-0 bg-black bg-opacity-25" />
+                        </Transition.Child>
+
+                        <div className="fixed inset-0 overflow-y-auto">
+                          <div className="flex min-h-full items-center justify-center p-4 text-center">
+                            <Transition.Child
+                              as={Fragment}
+                              enter="ease-out duration-300"
+                              enterFrom="opacity-0 scale-95"
+                              enterTo="opacity-100 scale-100"
+                              leave="ease-in duration-200"
+                              leaveFrom="opacity-100 scale-100"
+                              leaveTo="opacity-0 scale-95"
+                            >
+                              <Dialog.Panel className="w-full max-w-4xl transform overflow-hidden rounded-2xl bg-white p-6 text-left align-middle shadow-xl transition-all">
+                                <div className="flex justify-between items-center mb-6">
+                                  <Dialog.Title
+                                    as="h3"
+                                    className="text-lg font-semibold text-gray-900"
+                                  >
+                                    Available Bundles
+                                  </Dialog.Title>
+                                  <button
+                                    onClick={() => setIsBundleListOpen(false)}
+                                    className="text-gray-500 hover:text-gray-700"
+                                  >
+                                    <X size={24} />
+                                  </button>
+                                </div>
+
+                                {/* 🔍 Search Bar */}
+<div className="mb-4">
+  <input
+    type="text"
+    placeholder="Search Bundles..."
+    value={bundleSearch}
+    onChange={(e) => setBundleSearch(e.target.value)}
+    className="w-full border border-gray-300 rounded-lg px-4 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 text-gray-700"
+  />
+</div>
+
+
+                                <div className="grid gap-6 max-h-[70vh] overflow-y-auto pr-2">
+                                  {bundles
+                                    .filter(
+  (p) =>
+    p.status === "active" &&
+    (!bundleSearch ||
+      p.name.toLowerCase().includes(bundleSearch.toLowerCase()) ||
+      p.description?.toLowerCase().includes(bundleSearch.toLowerCase()))
+)
+
+                                    .map((bundle) => (
+                                      <motion.div
+                                        key={bundle.id}
+                                        className="border border-gray-200 rounded-lg p-6 hover:border-purple-300 transition-colors"
+                                        whileHover={{ scale: 1.005 }}
+                                      >
+                                        {/* Bundle Header */}
+                                        <div className="flex justify-between items-start mb-4">
+                                          <div>
+                                            <h4 className="font-semibold text-gray-900 text-lg">
+                                              {bundle.name}
+                                            </h4>
+                                            <p className="text-sm text-gray-600 mt-1">
+                                              {bundle.description}
+                                            </p>
+                                          </div>
+                                          <div className="text-right">
+                                            <div className="bg-purple-100 text-purple-800 px-3 py-2 rounded-lg text-sm font-bold">
+                                              ₱
+                                              {parseFloat(bundle.price).toFixed(
+                                                2
+                                              )}
+                                            </div>
+                                            <div className="text-xs text-purple-600 mt-1">
+                                              Bundle Price
+                                            </div>
+                                          </div>
+                                        </div>
+
+                                        {/* Bundle Details */}
+                                        <div className="grid grid-cols-2 gap-4 text-sm mb-4">
+                                          <div>
+                                            <span className="text-gray-500">
+                                              Valid:{" "}
+                                            </span>
+                                            <span className="text-gray-700">
+                                              {bundle.validFrom || "No expiry"}{" "}
+                                              to {bundle.validTo || "No expiry"}
+                                            </span>
+                                          </div>
+                                          <div>
+                                            <span className="text-gray-500">
+                                              Includes:{" "}
+                                            </span>
+                                            <span className="text-gray-700 font-medium">
+                                              {bundleServiceMap[bundle.id]
+                                                ?.length || 0}{" "}
+                                              services
+                                            </span>
+                                          </div>
+                                        </div>
+
+                                        {/* Included Services */}
+                                        {bundleServiceMap[bundle.id] &&
+                                          bundleServiceMap[bundle.id].length >
+                                            0 && (
+                                            <div className="mt-4">
+                                              <h5 className="text-sm font-medium text-gray-700 mb-3">
+                                                Included Services:
+                                              </h5>
+
+                                              <div className="space-y-2 max-h-40 overflow-y-auto border border-gray-200 rounded-lg p-3 bg-gray-50">
+                                                {bundleServiceMap[
+                                                  bundle.id
+                                                ].map((service, index) => (
+                                                  <div
+                                                    key={
+                                                      service.service_id ||
+                                                      service.id
+                                                    }
+                                                    className="flex items-center justify-between p-2 hover:bg-white rounded transition-colors"
+                                                  >
+                                                    <div className="flex items-center space-x-3">
+                                                      <div className="w-2 h-2 bg-purple-400 rounded-full"></div>
+                                                      <div>
+                                                        <div className="text-sm font-medium text-gray-800">
+                                                          {service.name}
+                                                        </div>
+                                                        <div className="text-xs text-gray-500">
+                                                          {service.category}
+                                                        </div>
+                                                      </div>
+                                                    </div>
+                                                    <div className="text-right">
+                                                      <div className="text-sm font-semibold text-gray-700">
+                                                        ₱
+                                                        {parseFloat(
+                                                          service.price ||
+                                                            service.originalPrice
+                                                        ).toFixed(2)}
+                                                      </div>
+                                                    </div>
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )}
+
+                                        {/* Action Buttons */}
+                                        <div className="mt-4 flex justify-between items-center">
+                                          <div className="text-sm text-gray-600">
+                                            {bundleServiceMap[bundle.id]
+                                              ?.length || 0}{" "}
+                                            services included
+                                          </div>
+                                          <div className="flex space-x-2">
+                                            <button
+                                              onClick={() => {
+                                                setIsBundleListOpen(false);
+                                              }}
+                                              className="px-4 py-2 border border-gray-300 text-gray-700 rounded-lg hover:bg-gray-50 text-sm"
+                                            >
+                                              Cancel
+                                            </button>
+                                            <button
+                                              onClick={() => {
+                                                // Add all bundle services to cart
+                                                if (
+                                                  bundleServiceMap[bundle.id]
+                                                ) {
+                                                  const bundleServices =
+                                                    bundleServiceMap[
+                                                      bundle.id
+                                                    ].map((service) => ({
+                                                      id:
+                                                        service.service_id ||
+                                                        service.id,
+                                                      name: service.name,
+                                                      category:
+                                                        service.category,
+                                                      price:
+                                                        parseFloat(
+                                                          bundle.price
+                                                        ) /
+                                                        bundleServiceMap[
+                                                          bundle.id
+                                                        ].length,
+                                                      originalPrice: parseFloat(
+                                                        service.price ||
+                                                          service.originalPrice
+                                                      ),
+                                                      quantity: 1,
+                                                      isFromBundle: true,
+                                                      bundleId: bundle.id,
+                                                      bundleName: bundle.name,
+                                                    }));
+
+                                                  setSelectedServices(
+                                                    (prev) => {
+                                                      // Filter out any existing services from the same bundle to avoid duplicates
+                                                      const filteredPrev =
+                                                        prev.filter(
+                                                          (service) =>
+                                                            !service.isFromBundle ||
+                                                            service.bundleId !==
+                                                              bundle.id
+                                                        );
+                                                      return [
+                                                        ...filteredPrev,
+                                                        ...bundleServices,
+                                                      ];
+                                                    }
+                                                  );
+
+                                                  toast.success(
+                                                    `"${bundle.name}" bundle added to cart!`
+                                                  );
+                                                }
+                                                setIsBundleListOpen(false);
+                                              }}
+                                              className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm font-medium flex items-center space-x-2"
+                                            >
+                                              <Package size={16} />
+                                              <span>Add Bundle to Cart</span>
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </motion.div>
+                                    ))}
+
+                                  {bundles.filter((b) => b.status === "active")
+                                    .length === 0 && (
+                                    <div className="text-center py-12 text-gray-500">
+                                      <Package
+                                        size={48}
+                                        className="mx-auto mb-3 text-gray-300"
+                                      />
+                                      <p className="text-lg">
+                                        No active bundles available
+                                      </p>
+                                      <p className="text-sm mt-1">
+                                        Check back later for new bundle offers
+                                      </p>
+                                    </div>
+                                  )}
+                                </div>
+                              </Dialog.Panel>
+                            </Transition.Child>
+                          </div>
+                        </div>
+                      </Dialog>
+                    </Transition>
 
                     {/* Action Buttons */}
                     <div className="flex flex-col gap-2 mt-6">
@@ -1618,7 +2537,7 @@ export default function ServiceOrderPage() {
                               {membershipType}
                             </span>
                           </div>
-                          <div className="flex justify-between">
+                          <div className="flex justify-between text-sm">
                             <span className="text-gray-600">
                               Remaining Balance:
                             </span>
@@ -1626,8 +2545,7 @@ export default function ServiceOrderPage() {
                               ₱
                               {Math.max(
                                 0,
-                                membershipBalance -
-                                  (useMembership ? membershipReduction : 0)
+                                membershipBalance - membershipBalanceDeduction
                               ).toLocaleString()}
                             </span>
                           </div>
@@ -1647,13 +2565,7 @@ export default function ServiceOrderPage() {
                       <div className="flex justify-between">
                         <span className="text-gray-600">Subtotal:</span>
                         <span className="font-medium">
-                          {formatCurrency(
-                            selectedServices.reduce(
-                              (sum, service) =>
-                                sum + service.price * service.quantity,
-                              0
-                            )
-                          )}
+                          {formatCurrency(calculatedSubtotal)}
                         </span>
                       </div>
 
@@ -1688,27 +2600,52 @@ export default function ServiceOrderPage() {
                       )}
 
                       {/* Membership */}
-                      {isMember && useMembership && membershipReduction > 0 && (
+                      {isMember &&
+                        useMembership &&
+                        !isNewMember &&
+                        membershipDiscountAmount > 0 && (
+                          <div className="flex justify-between text-emerald-600">
+                            <span>Membership:</span>
+                            <span>
+                              -{formatCurrency(membershipDiscountAmount)}
+                            </span>
+                          </div>
+                        )}
+                      {isMember && useMembership && isNewMember && (
                         <div className="flex justify-between text-emerald-600">
-                          <span>Membership:</span>
-                          <span>-{formatCurrency(membershipReduction)}</span>
+                          <span>Membership Balance Used:</span>
+                          <span>
+                            -
+                            {formatCurrency(
+                              Math.min(
+                                membershipBalance || 0,
+                                Math.max(
+                                  selectedServices.reduce(
+                                    (s, sv) =>
+                                      s + sv.price * (sv.quantity || 1),
+                                    0
+                                  ) -
+                                    (promoReduction || 0) -
+                                    (discountReduction || 0),
+                                  0
+                                )
+                              )
+                            )}
+                          </span>
                         </div>
                       )}
 
                       {/* Total */}
                       <div className="border-t pt-3 mt-3">
                         <div className="flex justify-between font-bold text-lg">
-                          <span>Total Amount:</span>
+                          <span>Total:</span>
                           <span>
                             {formatCurrency(
-                              selectedServices.reduce(
-                                (sum, service) =>
-                                  sum + service.price * service.quantity,
-                                0
-                              ) -
+                              calculatedSubtotal -
                                 promoReduction -
                                 discountReduction -
-                                (useMembership ? membershipReduction : 0)
+                                membershipDiscountAmount -
+                                membershipBalanceDeduction
                             )}
                           </span>
                         </div>
@@ -1723,9 +2660,11 @@ export default function ServiceOrderPage() {
                     <Scissors className="mr-2" size={16} />
                     Selected Services
                   </h3>
-                  <div className="overflow-x-auto">
-                    <table className="w-full">
-                      <thead>
+
+                  {/* Scrollable Table with hidden scrollbar */}
+                  <div className="max-h-80 overflow-y-auto overflow-x-auto scrollbar-hide">
+                    <table className="w-full border-collapse">
+                      <thead className="sticky top-0 bg-white z-10">
                         <tr className="border-b">
                           <th className="text-left pb-2">Service</th>
                           <th className="text-center pb-2">Qty</th>
@@ -1861,10 +2800,8 @@ export default function ServiceOrderPage() {
                             </span>
                             <span className="text-emerald-600 font-medium">
                               ₱
-                              {Math.max(
-                                0,
-                                membershipBalance -
-                                  (useMembership ? membershipReduction : 0)
+                              {(
+                                savedOrderData.new_membership_balance ?? 0
                               ).toLocaleString(undefined, {
                                 minimumFractionDigits: 2,
                               })}
@@ -1879,44 +2816,48 @@ export default function ServiceOrderPage() {
                       <h4 className="font-semibold mb-3 text-gray-700">
                         Services
                       </h4>
-                      <table className="w-full">
-                        <thead>
-                          <tr className="border-b">
-                            <th className="text-left pb-2 text-sm font-medium text-gray-500">
-                              Service
-                            </th>
-                            <th className="text-center pb-2 text-sm font-medium text-gray-500">
-                              Qty
-                            </th>
-                            <th className="text-right pb-2 text-sm font-medium text-gray-500 tabular-nums">
-                              Amount
-                            </th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {savedOrderData.services.map((service, index) => (
-                            <tr
-                              key={index}
-                              className="border-b last:border-b-0"
-                            >
-                              <td className="py-3 text-sm text-gray-800">
-                                {service.name}
-                              </td>
-                              <td className="py-3 text-center text-sm">
-                                {service.quantity}
-                              </td>
-                              <td className="py-3 text-sm text-right text-gray-800 tabular-nums">
-                                ₱
-                                {(
-                                  service.price * service.quantity
-                                ).toLocaleString(undefined, {
-                                  minimumFractionDigits: 2,
-                                })}
-                              </td>
+
+                      {/* Scrollable container */}
+                      <div className="max-h-64 overflow-y-auto border rounded-lg">
+                        <table className="w-full">
+                          <thead className="bg-gray-50 sticky top-0">
+                            <tr className="border-b">
+                              <th className="text-left pb-2 px-3 text-sm font-medium text-gray-500">
+                                Service
+                              </th>
+                              <th className="text-center pb-2 text-sm font-medium text-gray-500">
+                                Qty
+                              </th>
+                              <th className="text-right pb-2 px-3 text-sm font-medium text-gray-500 tabular-nums">
+                                Amount
+                              </th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead>
+                          <tbody>
+                            {savedOrderData.services.map((service, index) => (
+                              <tr
+                                key={index}
+                                className="border-b last:border-b-0 hover:bg-gray-50"
+                              >
+                                <td className="py-3 px-3 text-sm text-gray-800">
+                                  {service.name}
+                                </td>
+                                <td className="py-3 text-center text-sm">
+                                  {service.quantity}
+                                </td>
+                                <td className="py-3 px-3 text-sm text-right text-gray-800 tabular-nums">
+                                  ₱
+                                  {(
+                                    service.price * service.quantity
+                                  ).toLocaleString(undefined, {
+                                    minimumFractionDigits: 2,
+                                  })}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
                     </div>
 
                     {/* Totals */}
@@ -1926,11 +2867,12 @@ export default function ServiceOrderPage() {
                         <span>Subtotal:</span>
                         <span className="tabular-nums">
                           ₱
-                          {savedOrderData.services
-                            .reduce((sum, s) => sum + s.price * s.quantity, 0)
-                            .toLocaleString(undefined, {
+                          {(savedOrderData.subtotal ?? 0).toLocaleString(
+                            undefined,
+                            {
                               minimumFractionDigits: 2,
-                            })}
+                            }
+                          )}
                         </span>
                       </div>
 
@@ -1967,11 +2909,22 @@ export default function ServiceOrderPage() {
                       )}
 
                       {/* Membership */}
-                      {isMember && useMembership && membershipReduction > 0 && (
+                      {(savedOrderData.membershipDiscount ?? 0) > 0 && (
                         <div className="flex justify-between text-emerald-600">
-                          <span>Membership:</span>
+                          <span>Membership Discount (50%):</span>
                           <span className="tabular-nums">
-                            -{formatCurrency(membershipReduction)}
+                            -{formatCurrency(savedOrderData.membershipDiscount)}
+                          </span>
+                        </div>
+                      )}
+                      {(savedOrderData.membershipBalanceDeduction ?? 0) > 0 && (
+                        <div className="flex justify-between text-emerald-600">
+                          <span>Membership Balance Used:</span>
+                          <span className="tabular-nums">
+                            -
+                            {formatCurrency(
+                              savedOrderData.membershipBalanceDeduction
+                            )}
                           </span>
                         </div>
                       )}
@@ -1981,15 +2934,7 @@ export default function ServiceOrderPage() {
                         <div className="flex justify-between font-bold text-base">
                           <span>TOTAL:</span>
                           <span className="tabular-nums">
-                            {formatCurrency(
-                              savedOrderData.services.reduce(
-                                (sum, s) => sum + s.price * s.quantity,
-                                0
-                              ) -
-                                (promoReduction || 0) -
-                                (discountReduction || 0) -
-                                (useMembership ? membershipReduction : 0)
-                            )}
+                            {formatCurrency(savedOrderData.grand_total ?? 0)}
                           </span>
                         </div>
                       </div>
@@ -2018,18 +2963,7 @@ export default function ServiceOrderPage() {
                           Amount Paid
                         </label>
                         <div className="p-3 rounded-lg bg-gray-100 text-emerald-700 font-semibold shadow-inner">
-                          {formatCurrency(
-                            selectedServices.reduce(
-                              (sum, service) =>
-                                sum + service.price * service.quantity,
-                              0
-                            ) -
-                              (promoApplied ? promoReduction : 0) -
-                              (discount ? discountReduction : 0) -
-                              (isMember && useMembership
-                                ? membershipReduction
-                                : 0)
-                          )}
+                          {formatCurrency(savedOrderData.grand_total ?? 0)}
                         </div>
                       </div>
 

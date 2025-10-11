@@ -117,47 +117,54 @@ export default function CustomersPage() {
   }, [activeTab]);
 
   const fetchCustomers = async (filter = "all") => {
-    try {
-      setIsLoading(true);
-      const response = await fetch(
-        `http://localhost/API/customers.php?filter=${filter}`
-      );
-      if (!response.ok) throw new Error("Failed to fetch customers");
-      const data = await response.json();
-      // Decorate with persisted "new member" flags from localStorage
-      const decorated = Array.isArray(data)
-        ? data.map((c) => {
-            try {
-              const stored = localStorage.getItem(`newMember:${c.id}`);
-              if (!stored) return c;
-              const parsed = JSON.parse(stored);
-              const createdAt = parsed?.createdAt ? new Date(parsed.createdAt) : null;
-              const now = new Date();
-              // Consider "new" within 24 hours of creation
-              const isFresh = createdAt && now.getTime() - createdAt.getTime() < 24 * 60 * 60 * 1000;
-              if (isFresh) {
-                return {
-                  ...c,
-                  isNewMember: true,
-                  newMemberType: parsed?.type || (c.membership_status ? String(c.membership_status).toLowerCase() : undefined),
-                };
-              } else {
-                // Expired flag, clean up
-                localStorage.removeItem(`newMember:${c.id}`);
-              }
-            } catch (_) {
-              // ignore parsing errors
+  try {
+    setIsLoading(true);
+    const response = await fetch(
+      `http://localhost/API/customers.php?filter=${filter}`
+    );
+    if (!response.ok) throw new Error("Failed to fetch customers");
+    const data = await response.json();
+    
+    // Decorate with persisted "new member" flags
+    const decorated = Array.isArray(data)
+      ? data.map((c) => {
+          try {
+            const stored = localStorage.getItem(`newMember:${c.id}`);
+            if (!stored) return c;
+            
+            const parsed = JSON.parse(stored);
+            const storedMembershipId = parsed?.membershipId;
+            const currentMembershipId = c.membership_id; // Make sure your API returns this
+            
+            // Check if membership has been renewed (new membership ID)
+            if (storedMembershipId && currentMembershipId && 
+                storedMembershipId !== currentMembershipId) {
+              // Membership renewed - remove new member flag
+              localStorage.removeItem(`newMember:${c.id}`);
+              return c;
             }
-            return c;
-          })
-        : data;
-      setCustomers(decorated); // backend returns filtered data
-    } catch (error) {
-      console.error(error);
-    } finally {
-      setIsLoading(false);
-    }
-  };
+            
+            // Still a new member - show badge
+            return {
+              ...c,
+              isNewMember: true,
+              newMemberType: parsed?.type || 
+                (c.membership_status ? String(c.membership_status).toLowerCase() : undefined),
+            };
+          } catch (_) {
+            // ignore parsing errors
+          }
+          return c;
+        })
+      : data;
+      
+    setCustomers(decorated);
+  } catch (error) {
+    console.error(error);
+  } finally {
+    setIsLoading(false);
+  }
+};
 
   const fetchCustomerDetails = async (customerId) => {
     setIsLoadingDetails(true);
@@ -405,53 +412,51 @@ export default function CustomersPage() {
   };
 
   const handleSaveMembership = async () => {
-    const customer = selectedForMembership;
+  const customer = selectedForMembership;
 
-    try {
-      // Prepare the request body according to your backend expectations
-      const body = {
-        customer_id: customer.id,
-        action: "New Member",
-        type: membershipForm.type.toLowerCase(), // Backend expects lowercase
-        coverage: parseFloat(membershipForm.consumable),
-        remaining_balance: parseFloat(membershipForm.consumable), // Required by backend
-        payment_method: membershipForm.paymentMethod || "cash", // Lowercase as in backend
-        note: membershipForm.description || "",
-        duration: 1, // Default duration, adjust if needed
-      };
+  try {
+    const body = {
+      customer_id: customer.id,
+      action: "New Member",
+      type: membershipForm.type.toLowerCase(),
+      coverage: parseFloat(membershipForm.consumable),
+      remaining_balance: parseFloat(membershipForm.consumable),
+      payment_method: membershipForm.paymentMethod || "cash",
+      note: membershipForm.description || "",
+      duration: 1,
+    };
 
-      // Add expiration date if it's a promo with expiration
-      if (
-        membershipForm.type === "promo" &&
-        !membershipForm.noExpiration &&
-        membershipForm.validTo
-      ) {
-        body.duration = calculateDuration(membershipForm.validTo); // Calculate months duration
-      }
+    if (
+      membershipForm.type === "promo" &&
+      !membershipForm.noExpiration &&
+      membershipForm.validTo
+    ) {
+      body.duration = calculateDuration(membershipForm.validTo);
+    }
 
-      const response = await fetch("http://localhost/API/members.php", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(body),
-      });
+    const response = await fetch("http://localhost/API/members.php", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
 
-      if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || "Failed to add membership");
-      }
+    if (!response.ok) {
+      const errorData = await response.json();
+      throw new Error(errorData.error || "Failed to add membership");
+    }
 
-      const data = await response.json();
-      console.log("Membership API response:", data);
+    const data = await response.json();
+    console.log("Membership API response:", data);
 
-      if (data && data.id) {
-        // Update local state with the new membership data
-        const updatedCustomers = customers.map((c) =>
-          c.id === customer.id
-            ? {
+    if (data && data.id) {
+      const updatedCustomers = customers.map((c) =>
+        c.id === customer.id
+          ? {
               ...c,
-              membership_status: data.type.toUpperCase(), // From response
+              membership_status: data.type.toUpperCase(),
+              membership_id: data.id, // Store the membership ID
               membershipDetails: {
                 type: data.type,
                 coverage: data.coverage,
@@ -462,32 +467,36 @@ export default function CustomersPage() {
               isNewMember: true,
               newMemberType: data.type,
             }
-            : c
+          : c
+      );
+
+      setCustomers(updatedCustomers);
+      setIsMembershipModalOpen(false);
+      setSelectedCustomer(updatedCustomers.find((c) => c.id === customer.id));
+
+      // Store the new member flag with membership ID (no expiration)
+      try {
+        localStorage.setItem(
+          `newMember:${customer.id}`,
+          JSON.stringify({
+            type: data.type,
+            membershipId: data.id, // Store membership ID to track renewals
+            createdAt: new Date().toISOString(),
+          })
         );
-
-        setCustomers(updatedCustomers);
-        setIsMembershipModalOpen(false);
-        setSelectedCustomer(updatedCustomers.find((c) => c.id === customer.id));
-
-        // Persist the "new member" flag so it survives reloads (expires in 24h)
-        try {
-          localStorage.setItem(
-            `newMember:${customer.id}`,
-            JSON.stringify({ type: data.type, createdAt: new Date().toISOString() })
-          );
-        } catch (_) {
-          // storage may be unavailable; ignore
-        }
-
-        toast.success("Membership added successfully");
-      } else {
-        throw new Error("Invalid response from server");
+      } catch (_) {
+        // storage may be unavailable; ignore
       }
-    } catch (error) {
-      console.error("Error adding membership:", error);
-      toast.error(error.message || "Error connecting to server");
+
+      toast.success("Membership added successfully");
+    } else {
+      throw new Error("Invalid response from server");
     }
-  };
+  } catch (error) {
+    console.error("Error adding membership:", error);
+    toast.error(error.message || "Error connecting to server");
+  }
+};
 
   // Helper function to calculate duration in months
   function calculateDuration(validToDate) {
@@ -496,16 +505,6 @@ export default function CustomersPage() {
     const months = (validTo.getFullYear() - today.getFullYear()) * 12;
     return months + (validTo.getMonth() - today.getMonth());
   }
-
-  const handleAddMembership = (customerId) => {
-    const updatedCustomers = customers.map((customer) =>
-      customer.id === customerId
-        ? { ...customer, membership: "Standard" }
-        : customer
-    );
-    setCustomers(updatedCustomers);
-    toast.success("Membership added successfully");
-  };
 
   const handleAddMembershipClick = (customer) => {
     setSelectedForMembership(customer);
@@ -1046,7 +1045,7 @@ export default function CustomersPage() {
         </nav>
 
         {/* Main Content */}
-        <main className="flex-1 p-4 md:p-6 bg-gradient-to-br from-gray-50 to-white ml-0 lg:ml-64 min-h-screen transition-all duration-300">
+        <main className="flex-1 p-4 md:p-6 bg-gradient-to-br from-gray-50 to-white ml-0 lg:ml-64 min-h-screen transition-all duration-300 overflow-x-hidden">
           {/* Header Section */}
           <motion.div
             initial={{ opacity: 0, y: -20 }}

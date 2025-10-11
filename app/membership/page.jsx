@@ -52,14 +52,16 @@ export default function Memberships() {
   const servicesPerPage = 12;
   const [allServices, setAllServices] = useState([]);
   const [newMembership, setNewMembership] = useState({
-    name: "",
-    type: "",
-    description: "",
-    price: "",
-    consumable_amount: "",
-    no_expiration: true,
-    valid_until: "",
-  });
+  name: "",
+  type: "",
+  description: "",
+  discount: "",
+  price: "",
+  consumable_amount: "",
+  no_expiration: 0,
+  valid_until: "",
+  status: "active",
+});
 
   const calculateDiscountedPrice = (originalPrice) => {
     return originalPrice * 0.5; // 50% fixed discount for both types
@@ -142,7 +144,7 @@ export default function Memberships() {
         setAllServices(services);
 
         const getServiceId = (s) => s.id ?? s.service_id;
-        const included = editMembership.includedServices || [];
+        const included = editMembership.included_services || [];
 
         const preselected = services.filter((s) =>
           included.some((inc) => getServiceId(inc) === getServiceId(s))
@@ -153,11 +155,11 @@ export default function Memberships() {
     }
   }, [editMembership]);
 
-  // ✅ Use allServices here, not services
+// ✅ Use allServices here, not services
   const getServiceId = (s) => s.id ?? s.service_id;
 
   const preselected = allServices.filter((s) =>
-    (editMembership?.includedServices || []).some(
+    (editMembership?.included_services || []).some(
       (inc) => getServiceId(inc) === getServiceId(s)
     )
   );
@@ -167,90 +169,91 @@ export default function Memberships() {
   };
 
   const handleAdd = async () => {
-    if (!newMembership.description.trim()) {
-      toast.error("Description is required.");
-      return;
+  // Validate required fields
+  if (!newMembership.name.trim()) {
+    toast.error("Name is required.");
+    return;
+  }
+
+  if (!newMembership.type.trim()) {
+    toast.error("Type is required.");
+    return;
+  }
+
+  if (!newMembership.description.trim()) {
+    toast.error("Description is required.");
+    return;
+  }
+
+  if (!newMembership.price || newMembership.price <= 0) {
+    toast.error("Please enter a valid price.");
+    return;
+  }
+
+  if (!newMembership.consumable_amount || newMembership.consumable_amount <= 0) {
+    toast.error("Please enter a valid consumable amount.");
+    return;
+  }
+
+  if (!newMembership.no_expiration && !newMembership.valid_until) {
+    toast.error("Please select a valid until date or check 'No Expiration'.");
+    return;
+  }
+
+  try {
+    const membershipToSend = {
+      name: newMembership.name.trim(),
+      type: newMembership.type.trim().toLowerCase(),
+      description: newMembership.description.trim(),
+      discount: newMembership.discount.trim() || "0",
+      consumable_amount: Number(newMembership.consumable_amount),
+      price: Number(newMembership.price),
+      no_expiration: newMembership.no_expiration ? 1 : 0,
+      valid_until: !newMembership.no_expiration ? newMembership.valid_until : null,
+      status: newMembership.status || "active",
+      duration: 12,
+    };
+
+    console.log("Sending membership data:", membershipToSend);
+
+    const res = await fetch("http://localhost/API/memberships.php", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(membershipToSend),
+    });
+
+    const responseText = await res.text();
+    console.log("Server response:", responseText);
+
+    const data = JSON.parse(responseText);
+
+    if (!res.ok || data.error) {
+      throw new Error(data.message || data.error || "Failed to create membership");
     }
 
-    // Additional validation for promo memberships
-    if (newMembership.type === "promo") {
-      if (!newMembership.price || newMembership.price <= 0) {
-        toast.error("Please enter a valid price for the promo.");
-        return;
-      }
-      if (
-        !newMembership.consumable_amount ||
-        newMembership.consumable_amount <= 0
-      ) {
-        toast.error("Please enter a valid consumable amount.");
-        return;
-      }
-      if (!newMembership.no_expiration && !newMembership.valid_until) {
-        toast.error(
-          "Please select a valid until date or check 'No Expiration'."
-        );
-        return;
-      }
-    }
+    // Add the new membership to the state
+    setMemberships((prev) => [...prev, { ...data, type: membershipToSend.type }]);
 
-    try {
-      const membershipToSend = {
-        name:
-          newMembership.type === "basic"
-            ? "Basic"
-            : newMembership.type === "pro"
-              ? "Pro"
-              : "Promo",
-        type: newMembership.type,
-        description: newMembership.description,
-        discount: "50%",
-        consumable_amount:
-          newMembership.type === "basic"
-            ? 5000
-            : newMembership.type === "pro"
-              ? 10000
-              : Number(newMembership.consumable_amount),
-        price:
-          newMembership.type === "basic"
-            ? 3000
-            : newMembership.type === "pro"
-              ? 6000
-              : Number(newMembership.price),
-        no_expiration:
-          newMembership.type === "promo" ? newMembership.no_expiration : true,
-        valid_until:
-          newMembership.type === "promo" && !newMembership.no_expiration
-            ? newMembership.valid_until
-            : null,
-        duration: 12, // Default duration as shown in your existing records
-      };
+    // Reset form
+    setNewMembership({
+      name: "",
+      type: "",
+      description: "",
+      discount: "",
+      price: "",
+      consumable_amount: "",
+      no_expiration: 0,
+      valid_until: "",
+      status: "active",
+    });
 
-      const res = await fetch("http://localhost/API/memberships.php", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(membershipToSend),
-      });
-
-      const data = await res.json();
-
-      // Reset form with correct defaults
-      setNewMembership({
-        name: "Basic",
-        type: "basic",
-        description: "",
-        price: 3000,
-        consumable_amount: 5000,
-        no_expiration: true,
-        valid_until: "",
-      });
-
-      setIsModalOpen(false);
-      toast.success("Membership added successfully!");
-    } catch (error) {
-      console.error("Add error:", error);
-      toast.error("Failed to add membership. Please try again.");
-    }
-  };
+    setIsModalOpen(false);
+    toast.success("Membership created successfully!");
+  } catch (error) {
+    console.error("Add error:", error);
+    toast.error(error.message || "Failed to create membership.");
+  }
+};
 
   const handleEdit = async (id) => {
     const membershipToEdit = memberships.find((m) => m.id === id);
@@ -275,68 +278,75 @@ export default function Memberships() {
   };
 
   const handleSaveEdit = async () => {
-    if (
-      !editMembership.name ||
-      !editMembership.type ||
-      !editMembership.description
-    ) {
-      toast.error("All fields are required.");
-      return;
+  if (
+    !editMembership.name ||
+    !editMembership.type ||
+    !editMembership.description
+  ) {
+    toast.error("All fields are required.");
+    return;
+  }
+
+  try {
+    // Use selectedServices instead of fetching
+    const includedServices = selectedServices.map(service => ({
+      id: service.id,
+      name: service.name,
+      duration: service.duration,
+      originalPrice: service.originalPrice,
+      price: service.price,
+      discountedPrice: service.discountedPrice,
+      discountPercentage: service.discountPercentage,
+      description: service.description,
+      category: service.category,
+      membershipType: service.membershipType || editMembership.type,
+    }));
+
+    const membershipToSend = {
+      ...editMembership,
+      included_services: includedServices,
+      discount:
+        editMembership.type === "pro"
+          ? "50"
+          : editMembership.type === "basic"
+            ? "30"
+            : editMembership.discount || "0",
+    };
+
+    const res = await fetch(`http://localhost/API/memberships.php`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "update",
+        membership_id: editMembership.id,
+        ...membershipToSend,
+      }),
+    });
+
+    const updated = await res.json();
+
+    // Keep the original type instead of deriving from discount
+    const updatedWithType = {
+      ...updated,
+      type: editMembership.type, // Use the original type from editMembership
+    };
+
+    setMemberships((prev) =>
+      prev.map((m) => (m.id === updatedWithType.id ? updatedWithType : m))
+    );
+
+    // Update the services display if this is the currently selected membership
+    if (selectedMembership?.id === updatedWithType.id) {
+      setMembershipServices(includedServices);
     }
 
-    try {
-      let includedServices = [];
-
-      if (editMembership.type === "basic" || editMembership.type === "pro") {
-        includedServices = await fetchPremiumServices(editMembership.type);
-      } else {
-        includedServices = editMembership.included_services || [];
-      }
-
-      const membershipToSend = {
-        ...editMembership,
-        included_services: includedServices,
-        discount:
-          editMembership.type === "pro"
-            ? "50"
-            : editMembership.type === "basic"
-              ? "30"
-              : editMembership.discount || "0",
-      };
-
-      const res = await fetch(`http://localhost/API/memberships.php`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          action: "update", // ← important
-          membership_id: editMembership.id, // ← send the ID of the membership to update
-          ...membershipToSend,
-        }),
-      });
-
-      const updated = await res.json();
-
-      const updatedWithType = {
-        ...updated,
-        type:
-          updated.discount === "50"
-            ? "pro"
-            : updated.discount === "30"
-              ? "basic"
-              : "promo",
-      };
-
-      setMemberships((prev) =>
-        prev.map((m) => (m.id === updatedWithType.id ? updatedWithType : m))
-      );
-
-      setEditMembership(null);
-      toast.success("Membership updated successfully.");
-    } catch (error) {
-      console.error("Update error:", error);
-      toast.error("Failed to update membership.");
-    }
-  };
+    setEditMembership(null);
+    toast.success("Membership updated successfully.");
+  } catch (error) {
+    console.error("Update error:", error);
+    toast.error("Failed to update membership.");
+  }
+};
 
   const handleLogout = () => {
     localStorage.removeItem("authToken");
@@ -1087,207 +1097,207 @@ export default function Memberships() {
           </motion.div>
 
           {/* Add Membership Modal */}
-          <AnimatePresence>
-            {isModalOpen && (
-              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-                <div className="bg-white rounded-xl p-6 w-full max-w-3xl shadow-lg">
-                  <h3 className="text-xl font-bold mb-6 text-gray-900">
-                    Add New Membership Type
-                  </h3>
+<AnimatePresence>
+  {isModalOpen && (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-xl p-6 w-full max-w-3xl shadow-lg">
+        <h3 className="text-xl font-bold mb-6 text-gray-900">
+          Add New Membership Type
+        </h3>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    {/* Left Column */}
-                    <div className="space-y-4">
-                      {/* Name */}
-                      <div>
-                        <label className="block mb-1 font-medium">Name</label>
-                        <input
-                          type="text"
-                          value={newMembership.name}
-                          onChange={(e) =>
-                            setNewMembership({
-                              ...newMembership,
-                              name: e.target.value,
-                            })
-                          }
-                          className="w-full p-2 border rounded"
-                          placeholder="e.g., Gold, Premium"
-                        />
-                      </div>
+        <div className="grid grid-cols-2 gap-4">
+          {/* Left Column */}
+          <div className="space-y-4">
+            {/* Name */}
+            <div>
+              <label className="block mb-1 font-medium">Name</label>
+              <input
+                type="text"
+                value={newMembership.name || ""}
+                onChange={(e) =>
+                  setNewMembership({
+                    ...newMembership,
+                    name: e.target.value,
+                  })
+                }
+                className="w-full p-2 border rounded"
+                placeholder="e.g., Gold, Premium"
+              />
+            </div>
 
-                      {/* Type (changed to text input) */}
-                      <div>
-                        <label className="block mb-1 font-medium">Type</label>
-                        <input
-                          type="text"
-                          value={newMembership.type}
-                          onChange={(e) =>
-                            setNewMembership({
-                              ...newMembership,
-                              type: e.target.value,
-                            })
-                          }
-                          className="w-full p-2 border rounded"
-                          placeholder="e.g., pro, basic, promo, custom"
-                        />
-                      </div>
+            {/* Type */}
+            <div>
+              <label className="block mb-1 font-medium">Type</label>
+              <input
+                type="text"
+                value={newMembership.type || ""}
+                onChange={(e) =>
+                  setNewMembership({
+                    ...newMembership,
+                    type: e.target.value,
+                  })
+                }
+                className="w-full p-2 border rounded"
+                placeholder="e.g., pro, basic, promo, custom"
+              />
+            </div>
 
-                      {/* Discount */}
-                      <div>
-                        <label className="block mb-1 font-medium">
-                          Discount
-                        </label>
-                        <input
-                          type="text"
-                          value={newMembership.discount}
-                          onChange={(e) =>
-                            setNewMembership({
-                              ...newMembership,
-                              discount: e.target.value,
-                            })
-                          }
-                          className="w-full p-2 border rounded"
-                          placeholder="e.g., 50%"
-                        />
-                      </div>
+            {/* Discount */}
+            <div>
+              <label className="block mb-1 font-medium">
+                Discount
+              </label>
+              <input
+                type="text"
+                value={newMembership.discount || ""}
+                onChange={(e) =>
+                  setNewMembership({
+                    ...newMembership,
+                    discount: e.target.value,
+                  })
+                }
+                className="w-full p-2 border rounded"
+                placeholder="e.g., 50%"
+              />
+            </div>
 
-                      {/* Status */}
-                      <div>
-                        <label className="block mb-1 font-medium">Status</label>
-                        <select
-                          value={newMembership.status}
-                          onChange={(e) =>
-                            setNewMembership({
-                              ...newMembership,
-                              status: e.target.value,
-                            })
-                          }
-                          className="w-full p-2 border rounded"
-                        >
-                          <option value="active">Active</option>
-                          <option value="inactive">Inactive</option>
-                        </select>
-                      </div>
-                    </div>
+            {/* Status */}
+            <div>
+              <label className="block mb-1 font-medium">Status</label>
+              <select
+                value={newMembership.status || "active"}
+                onChange={(e) =>
+                  setNewMembership({
+                    ...newMembership,
+                    status: e.target.value,
+                  })
+                }
+                className="w-full p-2 border rounded"
+              >
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+              </select>
+            </div>
+          </div>
 
-                    {/* Right Column */}
-                    <div className="space-y-4">
-                      {/* Price */}
-                      <div>
-                        <label className="block mb-1 font-medium">
-                          Price (₱)
-                        </label>
-                        <input
-                          type="number"
-                          value={newMembership.price}
-                          onChange={(e) =>
-                            setNewMembership({
-                              ...newMembership,
-                              price: e.target.value,
-                            })
-                          }
-                          className="w-full p-2 border rounded"
-                          placeholder="Enter price"
-                        />
-                      </div>
+          {/* Right Column */}
+          <div className="space-y-4">
+            {/* Price */}
+            <div>
+              <label className="block mb-1 font-medium">
+                Price (₱)
+              </label>
+              <input
+                type="number"
+                value={newMembership.price || ""}
+                onChange={(e) =>
+                  setNewMembership({
+                    ...newMembership,
+                    price: e.target.value,
+                  })
+                }
+                className="w-full p-2 border rounded"
+                placeholder="Enter price"
+              />
+            </div>
 
-                      {/* Consumable Amount */}
-                      <div>
-                        <label className="block mb-1 font-medium">
-                          Consumable Amount (₱)
-                        </label>
-                        <input
-                          type="number"
-                          value={newMembership.consumable_amount}
-                          onChange={(e) =>
-                            setNewMembership({
-                              ...newMembership,
-                              consumable_amount: e.target.value,
-                            })
-                          }
-                          className="w-full p-2 border rounded"
-                          placeholder="Enter consumable balance"
-                        />
-                      </div>
+            {/* Consumable Amount */}
+            <div>
+              <label className="block mb-1 font-medium">
+                Consumable Amount (₱)
+              </label>
+              <input
+                type="number"
+                value={newMembership.consumable_amount || ""}
+                onChange={(e) =>
+                  setNewMembership({
+                    ...newMembership,
+                    consumable_amount: e.target.value,
+                  })
+                }
+                className="w-full p-2 border rounded"
+                placeholder="Enter consumable balance"
+              />
+            </div>
 
-                      {/* No Expiration */}
-                      <div className="flex items-center space-x-2">
-                        <input
-                          type="checkbox"
-                          checked={!!newMembership.no_expiration}
-                          onChange={(e) =>
-                            setNewMembership({
-                              ...newMembership,
-                              no_expiration: e.target.checked ? 1 : 0,
-                              valid_until: e.target.checked
-                                ? null
-                                : newMembership.valid_until,
-                            })
-                          }
-                        />
-                        <label>No Expiration</label>
-                      </div>
+            {/* No Expiration */}
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                checked={!!newMembership.no_expiration}
+                onChange={(e) =>
+                  setNewMembership({
+                    ...newMembership,
+                    no_expiration: e.target.checked ? 1 : 0,
+                    valid_until: e.target.checked
+                      ? ""
+                      : newMembership.valid_until,
+                  })
+                }
+              />
+              <label>No Expiration</label>
+            </div>
 
-                      {/* Valid Until */}
-                      {!newMembership.no_expiration && (
-                        <div>
-                          <label className="block mb-1 font-medium">
-                            Valid Until
-                          </label>
-                          <input
-                            type="date"
-                            value={newMembership.valid_until || ""}
-                            onChange={(e) =>
-                              setNewMembership({
-                                ...newMembership,
-                                valid_until: e.target.value,
-                              })
-                            }
-                            className="w-full p-2 border rounded"
-                          />
-                        </div>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Description - full width below grid */}
-                  <div className="mt-4">
-                    <label className="block mb-1 font-medium">
-                      Description
-                    </label>
-                    <textarea
-                      value={newMembership.description}
-                      onChange={(e) =>
-                        setNewMembership({
-                          ...newMembership,
-                          description: e.target.value,
-                        })
-                      }
-                      className="w-full p-2 border rounded"
-                      rows={3}
-                      placeholder="Enter short description"
-                    />
-                  </div>
-
-                  {/* Buttons */}
-                  <div className="flex justify-end space-x-2 mt-6">
-                    <button
-                      onClick={() => setIsModalOpen(false)}
-                      className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400 transition"
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={handleAdd}
-                      className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition"
-                    >
-                      Create
-                    </button>
-                  </div>
-                </div>
+            {/* Valid Until */}
+            {!newMembership.no_expiration && (
+              <div>
+                <label className="block mb-1 font-medium">
+                  Valid Until
+                </label>
+                <input
+                  type="date"
+                  value={newMembership.valid_until || ""}
+                  onChange={(e) =>
+                    setNewMembership({
+                      ...newMembership,
+                      valid_until: e.target.value,
+                    })
+                  }
+                  className="w-full p-2 border rounded"
+                />
               </div>
             )}
-          </AnimatePresence>
+          </div>
+        </div>
+
+        {/* Description - full width below grid */}
+        <div className="mt-4">
+          <label className="block mb-1 font-medium">
+            Description
+          </label>
+          <textarea
+            value={newMembership.description || ""}
+            onChange={(e) =>
+              setNewMembership({
+                ...newMembership,
+                description: e.target.value,
+              })
+            }
+            className="w-full p-2 border rounded"
+            rows={3}
+            placeholder="Enter short description"
+          />
+        </div>
+
+        {/* Buttons */}
+        <div className="flex justify-end space-x-2 mt-6">
+          <button
+            onClick={() => setIsModalOpen(false)}
+            className="px-4 py-2 bg-gray-300 rounded hover:bg-gray-400 transition"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={handleAdd}
+            className="px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition"
+          >
+            Create
+          </button>
+        </div>
+      </div>
+    </div>
+  )}
+</AnimatePresence>
 
           {/* Edit Membership Modal */}
           <AnimatePresence>
