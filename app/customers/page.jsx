@@ -69,6 +69,32 @@ export default function CustomersPage() {
   const [membershipLogs, setMembershipLogs] = useState([]);
   const [membershipTemplates, setMembershipTemplates] = useState([]);
 
+  // Helper function to check if customer should show new member badge
+  const shouldShowNewMemberBadge = (customer) => {
+    try {
+      const stored = localStorage.getItem(`newMember:${customer.id}`);
+      if (!stored) return false;
+      
+      const parsed = JSON.parse(stored);
+      const storedMembershipId = parsed?.membershipId;
+      const currentMembershipId = customer.membership_id;
+      
+      // Only remove the badge if membership has been renewed (different membership ID)
+      if (storedMembershipId && currentMembershipId && 
+          storedMembershipId !== currentMembershipId &&
+          currentMembershipId !== null && currentMembershipId !== undefined) {
+        // Membership renewed - remove flag and don't show badge
+        localStorage.removeItem(`newMember:${customer.id}`);
+        return false;
+      }
+      
+      // Show badge if flag exists and hasn't been renewed
+      return true;
+    } catch (_) {
+      return false;
+    }
+  };
+
   // Membership-related states
   const [isMembershipModalOpen, setIsMembershipModalOpen] = useState(false);
   const [selectedForMembership, setSelectedForMembership] = useState(null);
@@ -125,26 +151,17 @@ export default function CustomersPage() {
     if (!response.ok) throw new Error("Failed to fetch customers");
     const data = await response.json();
     
-    // Decorate with persisted "new member" flags
+    // Decorate with persisted "new member" flags using helper function
     const decorated = Array.isArray(data)
       ? data.map((c) => {
+          const shouldShowBadge = shouldShowNewMemberBadge(c);
+          if (!shouldShowBadge) return c;
+          
+          // Get stored data for badge type
           try {
             const stored = localStorage.getItem(`newMember:${c.id}`);
-            if (!stored) return c;
-            
             const parsed = JSON.parse(stored);
-            const storedMembershipId = parsed?.membershipId;
-            const currentMembershipId = c.membership_id; // Make sure your API returns this
             
-            // Check if membership has been renewed (new membership ID)
-            if (storedMembershipId && currentMembershipId && 
-                storedMembershipId !== currentMembershipId) {
-              // Membership renewed - remove new member flag
-              localStorage.removeItem(`newMember:${c.id}`);
-              return c;
-            }
-            
-            // Still a new member - show badge
             return {
               ...c,
               isNewMember: true,
@@ -152,9 +169,8 @@ export default function CustomersPage() {
                 (c.membership_status ? String(c.membership_status).toLowerCase() : undefined),
             };
           } catch (_) {
-            // ignore parsing errors
+            return c;
           }
-          return c;
         })
       : data;
       
@@ -388,23 +404,36 @@ export default function CustomersPage() {
       });
 
       setCustomerMemberships((prev) => [...prev, newMembership]);
-      setCustomers((prev) =>
-        prev.map((c) =>
-          c.id === customerId
-            ? { ...c, membershipUpdatedAt: Date.now(), isNewMember: false, newMemberType: undefined }
-            : c
-        )
-      );
-
-      // Clear persisted "new member" flag on renewal
+      
+      // Clear persisted "new member" flag on renewal FIRST
       try {
         localStorage.removeItem(`newMember:${customerId}`);
       } catch (_) {
         // ignore storage errors
       }
+      
+      // Update customers list to remove new member badge
+      setCustomers((prev) =>
+        prev.map((c) =>
+          c.id === customerId
+            ? { 
+                ...c, 
+                membershipUpdatedAt: Date.now(), 
+                isNewMember: false, 
+                newMemberType: undefined,
+                membership_id: newMembership.id // Update with new membership ID
+              }
+            : c
+        )
+      );
 
       fetchMembershipLogs(customerId);
       toast.success("✅ Membership renewed successfully!");
+      
+      // Refresh the customer list to update badges
+      setTimeout(() => {
+        refreshCustomerList();
+      }, 500);
     } catch (error) {
       toast.error("❌ Failed to renew membership.");
       console.error("Renewal error:", error);
@@ -489,6 +518,11 @@ export default function CustomersPage() {
       }
 
       toast.success("Membership added successfully");
+      
+      // Refresh the customer list to show new badges
+      setTimeout(() => {
+        refreshCustomerList();
+      }, 500);
     } else {
       throw new Error("Invalid response from server");
     }
@@ -514,6 +548,11 @@ export default function CustomersPage() {
   const handleRenewMembershipClick = (customer) => {
     setSelectedForMembership(customer);
     setIsRenewModalOpen(true);
+  };
+
+  // Function to refresh customer list and check badge persistence
+  const refreshCustomerList = () => {
+    fetchCustomers(activeTab);
   };
 
   useEffect(() => {
@@ -1213,8 +1252,8 @@ export default function CustomersPage() {
                                   <div className="text-sm font-medium text-gray-900 flex items-center">
                                     {customer.name}
                                     {customer.isNewMember ? (
-                                      <span className="ml-2 bg-amber-100 text-amber-800 text-xs px-1.5 py-0.5 rounded-full border border-amber-200">
-                                        New {customer.newMemberType ? customer.newMemberType.charAt(0).toUpperCase() + customer.newMemberType.slice(1) : ""} Member
+                                      <span className="ml-2 bg-gradient-to-r from-amber-100 to-yellow-100 text-amber-800 text-xs px-2 py-1 rounded-full border border-amber-300 font-semibold shadow-sm animate-pulse">
+                                        ✨ New {customer.newMemberType ? customer.newMemberType.charAt(0).toUpperCase() + customer.newMemberType.slice(1) : ""} Member
                                       </span>
                                     ) : (
                                       customer.membership_status &&
