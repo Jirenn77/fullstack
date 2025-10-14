@@ -93,12 +93,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'GET') {
         $performedBy = (int) $input['performed_by'];
         $timestamp = date('Y-m-d H:i:s');
 
-        // ✅ Normalize action values
-        if ($action === 'New Member') {
-            $action = 'new member';
-        } elseif ($action === 'Renewed') {
-            $action = 'renewed';
-        }
+// ✅ Normalize action values
+$action = strtolower(trim($input['action']));
+
+if (in_array($action, ['new member', 'create', 'new'])) {
+    $action = 'new member';
+} elseif (in_array($action, ['renewed', 'renew', 'renewal'])) {
+    $action = 'renewed';
+}
 
         // Skip logging if amount is zero and not a new membership creation
         if ($amount == 0 && $action !== 'new member') {
