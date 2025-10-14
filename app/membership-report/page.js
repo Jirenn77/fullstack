@@ -463,7 +463,7 @@ export default function MembershipExpirationReport() {
         body: JSON.stringify({
           customer_id: customerId,
           membership_id: newMembership.id,
-          action: "renewal",
+          action: "renewed",
           type,
           amount: coverage,
           payment_method: payment,

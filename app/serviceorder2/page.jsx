@@ -159,6 +159,16 @@ export default function ServiceOrderPage() {
     paymentMethod: "Cash",
   });
 
+  // Membership upgrade states
+  const [isMembershipUpgradeModalOpen, setIsMembershipUpgradeModalOpen] = useState(false);
+  const [upgradeMembershipForm, setUpgradeMembershipForm] = useState({
+    type: "basic",
+    name: "Basic",
+    fee: 3000,
+    consumable: 5000,
+    paymentMethod: "Cash",
+  });
+
   useEffect(() => {
     const now = new Date();
     const year = now.getFullYear().toString().slice(-2);
@@ -849,6 +859,113 @@ export default function ServiceOrderPage() {
     window.location.href = "/home";
   };
 
+  // Helper function to calculate duration in months
+  const calculateDuration = (validToDate) => {
+    const today = new Date();
+    const validTo = new Date(validToDate);
+    const months = (validTo.getFullYear() - today.getFullYear()) * 12;
+    return months + (validTo.getMonth() - today.getMonth());
+  };
+
+  // Membership upgrade function similar to customers page
+  const handleMembershipUpgrade = async () => {
+    if (!selectedCustomer) {
+      toast.error("No customer selected");
+      return;
+    }
+
+    try {
+      const body = {
+        customer_id: selectedCustomer.id,
+        action: "New Member",
+        type: upgradeMembershipForm.type.toLowerCase(),
+        coverage: parseFloat(upgradeMembershipForm.consumable),
+        remaining_balance: parseFloat(upgradeMembershipForm.consumable),
+        payment_method: upgradeMembershipForm.paymentMethod || "cash",
+        note: upgradeMembershipForm.description || "",
+        duration: 1,
+      };
+
+      if (
+        upgradeMembershipForm.type === "promo" &&
+        !upgradeMembershipForm.noExpiration &&
+        upgradeMembershipForm.validTo
+      ) {
+        body.duration = calculateDuration(upgradeMembershipForm.validTo);
+      }
+
+      const response = await fetch("http://localhost/API/members.php", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || "Failed to add membership");
+      }
+
+      const data = await response.json();
+      console.log("Membership API response:", data);
+
+      if (data && data.id) {
+        // Update the selected customer state
+        const updatedCustomer = {
+          ...selectedCustomer,
+          membershipType: data.type.toUpperCase(),
+          isMember: true,
+          balance: data.remaining_balance,
+          membershipDetails: {
+            type: data.type,
+            coverage: data.coverage,
+            remainingBalance: data.remaining_balance,
+            dateRegistered: data.date_registered,
+            expireDate: data.expire_date,
+          },
+          isNewMember: true,
+          newMemberType: data.type,
+        };
+
+        setSelectedCustomer(updatedCustomer);
+        setCustomerName(updatedCustomer.name);
+        setMembershipType(data.type.toUpperCase());
+        setIsMember(true);
+        setMembershipBalance(data.remaining_balance);
+        setIsNewMember(true);
+
+        // Update customers list
+        const updatedCustomers = customers.map((c) =>
+          c.id === selectedCustomer.id ? updatedCustomer : c
+        );
+        setCustomers(updatedCustomers);
+
+        // Store the new member flag with membership ID
+        try {
+          localStorage.setItem(
+            `newMember:${selectedCustomer.id}`,
+            JSON.stringify({
+              type: data.type,
+              membershipId: data.id,
+              createdAt: new Date().toISOString(),
+            })
+          );
+        } catch (_) {
+          // storage may be unavailable; ignore
+        }
+
+        setIsMembershipUpgradeModalOpen(false);
+        toast.success("Membership added successfully!");
+      } else {
+        throw new Error("Invalid response from server");
+      }
+    } catch (error) {
+      console.error("Error adding membership:", error);
+      toast.error(error.message || "Error connecting to server");
+    }
+  };
+
   const filteredCategories = serviceCategories.filter((category) => {
   const query = searchQuery.toLowerCase();
 
@@ -1376,7 +1493,7 @@ export default function ServiceOrderPage() {
                         className="mt-4 w-full py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg text-sm"
                         whileHover={{ scale: 1.02 }}
                         whileTap={{ scale: 0.98 }}
-                        onClick={() => setShowMembershipSignup(true)} // 👈 open modal here
+                        onClick={() => setIsMembershipUpgradeModalOpen(true)}
                       >
                         Upgrade to Membership
                       </motion.button>
@@ -3196,7 +3313,7 @@ export default function ServiceOrderPage() {
                           <option value="basic">
                             Basic (₱3,000 for 5,000 consumable)
                           </option>
-                          <option value="pro">
+                          <option value="Pro">
                             Pro (₱6,000 for 10,000 consumable)
                           </option>
                           {membershipTemplates
@@ -3520,10 +3637,10 @@ export default function ServiceOrderPage() {
                                   }}
                                   className="w-full p-2 border rounded"
                                 >
-                                  <option value="basic">
+                                  <option value="Basic">
                                     Basic (₱3,000 for 5,000 consumable)
                                   </option>
-                                  <option value="pro">
+                                  <option value="Pro">
                                     Pro (₱6,000 for 10,000 consumable)
                                   </option>
                                   {membershipTemplates
@@ -3643,6 +3760,198 @@ export default function ServiceOrderPage() {
                           {showMembershipSignup
                             ? "Register as Member"
                             : "Save Customer"}
+                        </button>
+                      </div>
+                    </form>
+                  </motion.div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
+            {/* Membership Upgrade Modal */}
+            <AnimatePresence>
+              {isMembershipUpgradeModalOpen && selectedCustomer && (
+                <motion.div
+                  className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  exit={{ opacity: 0 }}
+                >
+                  <motion.div
+                    className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[90vh] flex flex-col p-6"
+                    initial={{ scale: 0.95, opacity: 0 }}
+                    animate={{ scale: 1, opacity: 1 }}
+                    exit={{ scale: 0.95, opacity: 0 }}
+                    transition={{ type: "spring", stiffness: 300, damping: 25 }}
+                  >
+                    <div className="flex justify-between items-center border-b pb-3 mb-4">
+                      <h2 className="text-xl font-semibold text-gray-800">
+                        Upgrade {selectedCustomer.name} to Membership
+                      </h2>
+                      <button
+                        onClick={() => setIsMembershipUpgradeModalOpen(false)}
+                        className="text-gray-500 hover:text-gray-700"
+                      >
+                        <X size={24} />
+                      </button>
+                    </div>
+
+                    <form onSubmit={(e) => { e.preventDefault(); handleMembershipUpgrade(); }} className="flex-1 overflow-y-auto">
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                        {/* Membership Type */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Membership Type <span className="text-red-500">*</span>
+                          </label>
+                          <select
+                            value={upgradeMembershipForm.type}
+                            onChange={(e) => {
+                              const type = e.target.value;
+                              const template = membershipTemplates.find(
+                                (m) => m.type === type
+                              );
+
+                              setUpgradeMembershipForm({
+                                ...upgradeMembershipForm,
+                                type,
+                                name: template
+                                  ? template.name
+                                  : type === "basic"
+                                    ? "Basic"
+                                    : "Pro",
+                                fee: template
+                                  ? template.price
+                                  : type === "basic"
+                                    ? 3000
+                                    : 6000,
+                                consumable: template
+                                  ? template.consumable_amount
+                                  : type === "basic"
+                                    ? 5000
+                                    : 10000,
+                                validTo:
+                                  template && template.valid_until
+                                    ? template.valid_until
+                                    : "",
+                                noExpiration: template
+                                  ? template.no_expiration === 1
+                                  : false,
+                              });
+                            }}
+                            className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                            required
+                          >
+                            <option value="Basic">
+                              Basic (₱3,000 for 5,000 consumable)
+                            </option>
+                            <option value="Pro">
+                              Pro (₱6,000 for 10,000 consumable)
+                            </option>
+                            {membershipTemplates
+                              .filter((m) => m.type === "promo")
+                              .map((m) => (
+                                <option key={m.id} value="promo">
+                                  {m.name} (Promo)
+                                </option>
+                              ))}
+                          </select>
+                        </div>
+
+                        {/* Payment Method */}
+                        <div>
+                          <label className="block text-sm font-medium text-gray-700 mb-1">
+                            Payment Method <span className="text-red-500">*</span>
+                          </label>
+                          <select
+                            value={upgradeMembershipForm.paymentMethod || ""}
+                            onChange={(e) =>
+                              setUpgradeMembershipForm({
+                                ...upgradeMembershipForm,
+                                paymentMethod: e.target.value,
+                              })
+                            }
+                            className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                            required
+                          >
+                            <option value="">Select Method</option>
+                            <option value="Cash">Cash</option>
+                            <option value="GCash">GCash</option>
+                            <option value="Card">Card</option>
+                            <option value="Bank Transfer">Bank Transfer</option>
+                          </select>
+                        </div>
+
+                        {/* Promo fields */}
+                        {upgradeMembershipForm.type === "promo" && (
+                          <>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Price (₱)
+                              </label>
+                              <input
+                                type="number"
+                                value={upgradeMembershipForm.fee}
+                                onChange={(e) =>
+                                  setUpgradeMembershipForm({
+                                    ...upgradeMembershipForm,
+                                    fee: e.target.value,
+                                  })
+                                }
+                                className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                              />
+                            </div>
+                            <div>
+                              <label className="block text-sm font-medium text-gray-700 mb-1">
+                                Consumable Amount
+                              </label>
+                              <input
+                                type="number"
+                                value={upgradeMembershipForm.consumable}
+                                onChange={(e) =>
+                                  setUpgradeMembershipForm({
+                                    ...upgradeMembershipForm,
+                                    consumable: e.target.value,
+                                  })
+                                }
+                                className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                              />
+                            </div>
+                            {!upgradeMembershipForm.noExpiration && (
+                              <div>
+                                <label className="block text-sm font-medium text-gray-700 mb-1">
+                                  Valid Until
+                                </label>
+                                <input
+                                  type="date"
+                                  value={upgradeMembershipForm.validTo}
+                                  onChange={(e) =>
+                                    setUpgradeMembershipForm({
+                                      ...upgradeMembershipForm,
+                                      validTo: e.target.value,
+                                    })
+                                  }
+                                  className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                                />
+                              </div>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {/* Action buttons */}
+                      <div className="mt-6 flex justify-end space-x-3 border-t pt-4">
+                        <button
+                          type="button"
+                          onClick={() => setIsMembershipUpgradeModalOpen(false)}
+                          className="px-5 py-2 rounded-lg border border-gray-300 text-gray-700 hover:bg-gray-100 transition"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="submit"
+                          className="px-5 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 transition"
+                        >
+                          Upgrade to Membership
                         </button>
                       </div>
                     </form>

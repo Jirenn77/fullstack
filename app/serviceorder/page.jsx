@@ -3359,7 +3359,7 @@ export default function ServiceOrderPage() {
                           <option value="basic">
                             Basic (₱3,000 for 5,000 consumable)
                           </option>
-                          <option value="pro">
+                          <option value="Pro">
                             Pro (₱6,000 for 10,000 consumable)
                           </option>
                           {membershipTemplates
@@ -3683,10 +3683,10 @@ export default function ServiceOrderPage() {
                                   }}
                                   className="w-full p-2 border rounded"
                                 >
-                                  <option value="basic">
+                                  <option value="Basic">
                                     Basic (₱3,000 for 5,000 consumable)
                                   </option>
-                                  <option value="pro">
+                                  <option value="Pro">
                                     Pro (₱6,000 for 10,000 consumable)
                                   </option>
                                   {membershipTemplates
@@ -3887,10 +3887,10 @@ export default function ServiceOrderPage() {
                             className="w-full border border-gray-300 rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-emerald-500"
                             required
                           >
-                            <option value="basic">
+                            <option value="Basic">
                               Basic (₱3,000 for 5,000 consumable)
                             </option>
-                            <option value="pro">
+                            <option value="Pro">
                               Pro (₱6,000 for 10,000 consumable)
                             </option>
                             {membershipTemplates

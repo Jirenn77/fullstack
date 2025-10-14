@@ -1117,7 +1117,7 @@ export default function CustomersPage() {
 
           {/* Stats Overview */}
           <motion.div
-            className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-5 mb-5 md:mb-6"
+            className="grid grid-cols-2 md:grid-cols-3 gap-3 md:gap-5 mb-5 md:mb-6"
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.2 }}
@@ -1156,7 +1156,7 @@ export default function CustomersPage() {
               </div>
             </div>
 
-            <div className="bg-white p-3 md:p-5 rounded-xl md:rounded-2xl shadow-sm border border-gray-100 flex items-center">
+            {/* <div className="bg-white p-3 md:p-5 rounded-xl md:rounded-2xl shadow-sm border border-gray-100 flex items-center">
               <div className="bg-purple-100 p-2 md:p-3 rounded-lg md:rounded-xl mr-3 md:mr-4">
                 <Activity className="text-purple-600" size={20} />
               </div>
@@ -1166,7 +1166,7 @@ export default function CustomersPage() {
                 </h3>
                 <p className="text-xs md:text-sm text-gray-600">Recent Activities</p>
               </div>
-            </div>
+            </div> */}
           </motion.div>
 
           {/* Filter Tabs */}

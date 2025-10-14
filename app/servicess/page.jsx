@@ -1543,10 +1543,9 @@ export default function ServiceGroupsPage() {
             </AnimatePresence>
           </div>
 
-          {/* Your existing modals (Add Service, Edit Service, Add Group, Edit Group) remain the same */}
           {/* Add Service Modal */}
           <AnimatePresence>
-            {isAddModalOpen && selectedGroup && (
+            {isAddModalOpen && (
               <motion.div
                 className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50"
                 initial={{ opacity: 0 }}
